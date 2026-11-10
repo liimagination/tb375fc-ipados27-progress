@@ -1,0 +1,13 @@
+{
+  "boot_sha256": "4ff9c1265a88ae9c2ae1a171dcb37ffa8d00fe1457f3ab5065b00009c48e8126",
+  "partition": "boot_a",
+  "device": "HA227LJ3",
+  "flash_succeeded": true,
+  "sending_seconds": 17.138,
+  "writing_seconds": 0.2,
+  "reboot_succeeded": true,
+  "reboot_seconds": 0.112,
+  "hardware_checkpoint_confirmed": true,
+  "pending": "A: green bar then reboot observed; next B: After MMU off. Kernel entry and full kernel boot remain unconfirmed.",
+  "evidence": "Successful fastboot output captured before interruption"
+}

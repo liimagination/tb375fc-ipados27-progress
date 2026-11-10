@@ -1,0 +1,78 @@
+--- a/security/mac_policy.h
++++ b/security/mac_policy.h
+@@ -1169,6 +1169,12 @@
+ 	kauth_cred_t cred,
+ 	io_object_t entry
+ 	);
++
++/* UniXNU 24A446 observed reserved-slot ABI: int(credential, service). */
++typedef int mpo_iokit_check_service_start_t(
++	kauth_cred_t cred,
++	io_object_t service
++	);
+ /**
+  *  @brief Access control check for getting I/O Kit device properties
+  *  @param cred Subject credential
+@@ -6080,7 +6086,7 @@
+ 	mpo_vnode_notify_will_rename_swap_t     *mpo_vnode_notify_will_rename_swap;
+ 	mpo_reserved_hook_t                     *mpo_reserved20;
+ 	mpo_reserved_hook_t                     *mpo_reserved21;
+-	mpo_reserved_hook_t                     *mpo_reserved22;
++	mpo_iokit_check_service_start_t          *mpo_iokit_check_service_start;
+ 
+ 	mpo_necp_check_open_t                   *mpo_necp_check_open;
+ 	mpo_necp_check_client_action_t          *mpo_necp_check_client_action;
+--- a/security/mac_framework.h
++++ b/security/mac_framework.h
+@@ -215,6 +215,7 @@
+ int     mac_iokit_check_open(kauth_cred_t cred, io_object_t user_client, unsigned int user_client_type) __result_use_check;
+ int     mac_iokit_check_set_properties(kauth_cred_t cred, io_object_t registry_entry, io_object_t properties) __result_use_check;
+ int     mac_iokit_check_filter_properties(kauth_cred_t cred, io_object_t registry_entry) __result_use_check;
++int     mac_iokit_check_service_start(kauth_cred_t cred, io_object_t service) __result_use_check;
+ int     mac_iokit_check_get_property(kauth_cred_t cred, io_object_t registry_entry, const char *name) __result_use_check;
+ #ifdef KERNEL_PRIVATE
+ int     mac_iokit_check_hid_control(kauth_cred_t cred) __result_use_check;
+--- a/security/mac_iokit.c
++++ b/security/mac_iokit.c
+@@ -92,6 +92,17 @@
+ }
+ 
+ int
++mac_iokit_check_service_start(kauth_cred_t cred, io_object_t service)
++{
++	int error;
++
++	_Static_assert(__builtin_offsetof(struct mac_policy_ops, mpo_iokit_check_service_start) == 0x1e8,
++	    "24A446 service-start policy slot changed");
++	MAC_CHECK(iokit_check_service_start, cred, service);
++	return error;
++}
++
++int
+ mac_iokit_check_filter_properties(kauth_cred_t cred, io_object_t registry_entry)
+ {
+ 	int error;
+--- a/iokit/Kernel/IOService.cpp
++++ b/iokit/Kernel/IOService.cpp
+@@ -64,6 +64,7 @@
+ #include <machine/atomic.h>
+ #include <IOKit/assert.h>
+ #include <sys/errno.h>
++#include <security/mac_framework.h>
+ #include <sys/kdebug.h>
+ #include <string.h>
+ 
+@@ -779,6 +780,13 @@
+ bool
+ IOService::start( IOService * provider )
+ {
++#if CONFIG_MACF
++	if (mac_iokit_check_service_start(kauth_cred_get(), this) != 0) {
++		IOLog("%s (%s): FAILED MAC check in ::start()\n",
++		    getName(), getMetaClass()->getClassName());
++		return false;
++	}
++#endif
+ 	return true;
+ }
+ 

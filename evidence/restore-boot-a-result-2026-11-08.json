@@ -1,0 +1,16 @@
+{
+  "time_local": "2026-11-08T22:51:30.2648080+08:00",
+  "explicit_user_request": true,
+  "device_serial": "HA227LJ3",
+  "product": "P98300DA2",
+  "slot": "a",
+  "partition": "boot_a",
+  "image": "rollback/boot_a.stock.img",
+  "image_bytes": 67108864,
+  "sha256": "1ad2cb450587a101ec6fcb7e0db7cf0b3f9b9ff978cf972a7b52a909cb815357",
+  "fastboot_send": "OKAY (204.998s)",
+  "fastboot_write": "OKAY (0.248s)",
+  "reboot": "OKAY",
+  "other_partitions_modified": false,
+  "android_boot_observed": false
+}

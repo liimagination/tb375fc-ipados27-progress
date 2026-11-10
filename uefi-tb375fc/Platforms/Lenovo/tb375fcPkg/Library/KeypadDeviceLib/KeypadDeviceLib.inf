@@ -1,0 +1,33 @@
+##
+#  Lenovo TB375FC (MediaTek MT6897) keys for SiliciumPkg KeypadDeviceDxe.
+#
+#  The board has no UART console (bootargs carries mtk_printk_ctrl.disable_uart=1
+#  and console=tty0), so the volume keys are the only input the UniXNU menu has
+#  until the PMIC key driver exists.
+#
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = KeypadDeviceLib
+  FILE_GUID                      = C4A9E52B-7D18-4F63-8E02-5B1D904A7C38
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = KeypadDeviceLib
+  CONSTRUCTOR                    = KeypadDeviceConstructor
+
+[Sources.common]
+  KeypadDeviceLib.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  SiliciumPkg/SiliciumPkg.dec
+
+[LibraryClasses]
+  BaseMemoryLib
+  DebugLib
+  IoLib
+  MemoryMapHelperLib
+  UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib

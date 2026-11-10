@@ -1,0 +1,475 @@
+schema_version = 1
+
+[device]
+name = "tb375fc"
+soc = "MT6897"
+os_profile = "ipados-17.7.11-21H461"
+summary = "Lenovo Xiaoxin Pad Pro 12.7 (2025), TB375FC / yili, MediaTek MT6897 (Dimensity 8300). The stock package and the live device inventory are recorded; the UEFI menu, XNU and userspace are still being built."
+
+[[area]]
+id = "configuration"
+status = "implemented"
+components = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot"]
+paths = ["board.toml", "feeds.toml", "configs/**", "dts/**", ".github/**", "local.toml.example"]
+inputs = [
+  "Lenovo TB375FC board identity from adb: ro.product.device TB375FC, ro.product.name yili, ro.board.platform mt6897, ro.boot.hardware mt8792.",
+  "SoC identity MT6897 (Dimensity 8300); the stock device tree reports model \"MT8792\" with compatible \"mediatek,MT6897\", so the board reports both names.",
+  "Shared arm64 bootstrap OS profile ipados-17.7.11-21H461 and the UniXNU-mt6897-common SoC source selected through local.toml (dts/mt6897.dtsi verified against the live device tree by that repository's check-dtsi.sh).",
+]
+configuration = [
+  "board.toml sets schema_version 2, board.name tb375fc, board.soc MT6897, board.soc_source mt6897 and the bootstrap os_profile.",
+  "kernel.config_fragments follows the arch, soc, os, device order; kernel.patch_series keeps the same order with an empty device series.",
+  "device_tree.source is device:dts/tb375fc.dts with soc:dts on include_dirs, configs/tb375fc_defconfig enables the shared ARM DT platform, ARMCPU and prelinked crypto paths.",
+]
+procedure = [
+  "Read the live inventory with root adb and record it in ../findings.md before editing board.toml.",
+  "./unixnu defconfig tb375fc_defconfig -D ../tb375fc-port/device resolves configs/tb375fc_defconfig.",
+  "./unixnu status --json -D ../tb375fc-port/device reports the effective layers, source pins and patch order.",
+]
+findings = [
+  "iPadOS 27 is arm64e only and UniXNU restricts arm64e to supported devices, currently sheng on SM8550; no MT6897 SoC support is published, so the bootstrap profile stays on the shared arm64 configuration.",
+  "board.example stays true until the menu is confirmed on hardware, which makes build and bootimg refuse to run and prevents an unverified image from being produced.",
+  "UniXNU compiles the board DTS with plain dtc and no C preprocessor, so the shared SoC file is pulled in with dtc's own /include/ directive resolved through device_tree.include_dirs = [\"soc:dts\"]; an #include there silently produces a tree with no CPUs.",
+  "The board DTS compiles to a 2,388-byte DTB that carries the merged GIC, PSCI, timer, eight CPU nodes and the measured memory node.",
+  "The stock package string TB375FC_CN_OPEN_USER_M21.814_V_ZUI_17.0.04.016_ST_250501_SW_P98300DA2_V016_WIFI_LENOVO_PERIDOTV_USR_MP identifies a Wi-Fi only tablet, so the cellular area is not-applicable.",
+]
+completion = [
+  "Source pins resolve, the effective configuration contains the TB375FC overrides and every selected component has an owning area.",
+]
+limits = [
+  "The SoC source is a local checkout until UniXNU-mt6897-common is published and pinned by a reviewed commit in feeds.toml.",
+  "The APFS Data volume UUID and the unique chip ID are payload inputs and still unmeasured.",
+]
+next_action = [
+  "Pin a reviewed UniXNU-mt6897-common commit in feeds.toml once the SoC repository is published, then clear example once the UEFI menu is confirmed.",
+]
+evidence = [
+  { kind = "source", reference = "board.toml", result = "Format 2 board configuration with the measured TB375FC identity and the bootstrap OS profile." },
+  { kind = "source", reference = "dts/tb375fc.dts", result = "Board device tree carrying the measured DRAM, PSCI, CPU, GIC and timer values." },
+  { kind = "source", reference = "proprietary-files.txt", result = "SHA-256 pins for every stock firmware input this repository derives values from." },
+]
+
+[[area]]
+id = "firmware"
+status = "planned"
+components = ["DarwinBoot"]
+paths = ["proprietary-files.txt", "scripts/**"]
+inputs = [
+  "Stock TB375FC_ZUX_1.1.04.016 boot.img header v4: page 4096, header_size 1584, kernel_size 16,410,321, ramdisk_size 0, empty cmdline.",
+  "Stock vendor_boot.img header v4: kernel_addr 0x40000000, ramdisk_addr 0x66f00000, tags_addr 0x47c80000, page_size 4096, cmdline bootopt=64S3,32N2,64N2.",
+  "Live /chosen linux,initrd-start 0x66f00000 and linux,initrd-end 0x68b246ed, which confirm the vendor ramdisk window the bootloader hands over.",
+  "Live fastboot reported unlocked yes and current-slot a; the fastboot boot path for a self-built image is unverified on this unit.",
+]
+configuration = [
+  "board.toml bootimg.image keeps header_version 4 and pagesize 4096 to match the stock boot image the LK path expects.",
+  "board.toml payload selects loader firmware, a 192 MiB volume and dram_size 0x200000000 for the 8 GiB board.",
+  "The firmware DSC and FDF live in ../uefi-tb375fc and must carry UniXNU, UniXNUDxe, UniXNURamDiskDxe, DarwinBoot, DiskIoDxe, PartitionDxe and FAT.",
+  "The firmware build overrides the edk2 input with Mu_Basecore release/202511 at 7e2a44a7129856365a8d71eff83de38877b47e66 through UniXNU's documented --edk2 input, because the Mu-Silicium revision this board builds against requires the 202511 ArmPkg/Library/ArmLib layout.",
+]
+procedure = [
+  "Parse the stock boot and vendor_boot headers with tools/parse_boot_headers.py instead of trusting the recorded offsets.",
+  "Export /sys/firmware/fdt with root adb and decode it with dtc to confirm the handoff addresses on the running unit.",
+  "Build the firmware volume and pack a v4 zero ramdisk boot image, then RAM boot it and record the first screen and last confirmed stage.",
+]
+findings = [
+  "TB375FC LK hands off at exactly the addresses UniXNU already supports on the same vendor TB365FC, so the Plan A packaging of tb365fc applies: the UEFI FD is the gzip kernel field and LK decompresses it to 0x40000000 before jumping to the SEC entry.",
+  "The stock boot ramdisk is empty and the vendor ramdisk is 26,913,632 bytes, so a zero ramdisk boot image matches the stock shape rather than fighting it.",
+  "fastboot fetch is not supported on this bootloader, so the active partitions can only be verified from the rooted device, not read back over fastboot.",
+  "Mu-Silicium at 964a886f is written against Mu_Basecore release/202511: SiliciumPkg.dsc.inc references ArmPkg/Library/ArmLib/ArmBaseLib.inf, which release/202608 moved to MdePkg. The edk2 input is therefore pinned to 202511 rather than the UniXNU feeds.toml 202608 revision, and the override is recorded here instead of patching either tree.",
+  "The board BootShim compiles to 336 bytes with _Payload at offset 0x150 and an ARM64 image header naming 0x40000000 and len(shim)+FD_SIZE, which satisfies the three checks the boot image packer performs.",
+]
+completion = [
+  "The firmware image builds, enters UniXNU, publishes the framebuffer and preserves the documented memory reservations.",
+]
+limits = [
+  "No firmware image exists yet; the platform package in ../uefi-tb375fc is still being completed and no FD has been built.",
+  "fastboot boot acceptance for a self-built image is unverified and needs one user-authorised RAM boot.",
+]
+next_action = [
+  "Build the FD from ../uefi-tb375fc, pack the v4 zero ramdisk boot image and RAM boot it once to reach the UniXNU menu.",
+]
+evidence = [
+  { kind = "source", reference = "proprietary-files.txt", result = "Hash pins and geometry notes for the boot, vendor_boot, init_boot, dtbo and extracted DTB inputs." },
+  { kind = "source", reference = "evidence/live-fdt.dtb", result = "Live FDT exported from /sys/firmware/fdt on the unit; /chosen linux,initrd-start 0x66f00000 and end 0x68b246ed confirm the vendor ramdisk window." },
+  { kind = "source", reference = "evidence/cmdline.txt", result = "Live /proc/cmdline showing bootopt=64S3,32N2,64N2 and fastboot_enable=1, matching the stock vendor_boot cmdline." },
+  { kind = "source", reference = "https://github.com/UniXNU/UniXNU/blob/7307c26ea5053a9b7a3e58b81a12b6f1d5a2b226/docs/zh/porting/uefi-firmware.md", result = "Required firmware integration list this board follows: UniXNU, UniXNUDxe, UniXNURamDiskDxe, DarwinBoot, DiskIoDxe and FAT." },
+]
+
+[[area]]
+id = "cpu"
+status = "implemented"
+components = ["ArmCpu"]
+paths = ["dts/**", "package/**"]
+inputs = [
+  "Live MIDR per core: cpu0-3 0x411fd461 (Cortex-A510 r1p1), cpu4-7 0x411fd4d0 (Cortex-A715 r1p0), eight cores in two clusters.",
+  "/psci compatible arm,psci-1.0 with method smc.",
+  "/proc/iomem GICD 0x0c400000-0x0c43ffff, GICR 0x0c440000-0x0c63ffff.",
+]
+configuration = [
+  "dts/tb375fc.dts declares eight cpu nodes with MPIDR reg values 0x000, 0x100 ... 0x700 and enable-method psci.",
+  "The interrupt-controller node carries only the two measured GIC ranges and three interrupt cells; the timer node uses the four standard ARMv8 PPIs.",
+  "configs/tb375fc_defconfig enables CONFIG_XNU_ARMCPU so the shared ArmCpu component supplies GICv3 and the generic timer.",
+]
+procedure = [
+  "Read each MIDR from /sys/devices/system/cpu/cpuN/regs/identification/midr_el1 as root and compare with the stock device tree cpu nodes.",
+  "Cross-check the GIC ranges against /proc/iomem rather than the device tree alone, because the tree also lists redistributor regions as part of the soc node.",
+]
+findings = [
+  "The stock device tree declares a third cluster entry in cpu-map while only two clusters exist in MIDR terms; the MPIDR readings settle the real topology as 4x A510 plus 4x A715.",
+  "GICR spans 2 MiB, which matches two 256 KiB redistributor frames per cluster plus the VLPI space, so the single contiguous range is sufficient for the shared ArmCpu driver.",
+]
+completion = [
+  "Every enabled CPU reaches its entry checkpoint and timer and IPI handling works on each enabled CPU.",
+]
+limits = [
+  "Only the device-tree description exists; no XNU kernel has been built for this board, so no CPU has been brought up under XNU.",
+]
+next_action = [
+  "After the first XNU entry checkpoint, record the per-core entry results and confirm the GIC redistributor stride against the driver's expectation.",
+]
+evidence = [
+  { kind = "source", reference = "dts/tb375fc.dts", result = "Eight CPU nodes with measured MPIDR values, the measured GICD and GICR ranges and the ARMv8 timer PPIs." },
+  { kind = "source", reference = "evidence/midr.txt", result = "Per-CPU MIDR read from regs/identification/midr_el1: cpu0-3 0x411fd461 (Cortex-A510), cpu4-7 0x411fd4d0 (Cortex-A715)." },
+  { kind = "source", reference = "evidence/iomem.txt", result = "/proc/iomem showing GICD 0x0c400000-0x0c43ffff and GICR 0x0c440000-0x0c63ffff." },
+]
+
+[[area]]
+id = "memory"
+status = "implemented"
+components = []
+paths = ["dts/**", "package/**"]
+inputs = [
+  "Live /memory reg = <0x0 0x40000000 0x2 0x0>: 8 GiB of DRAM starting at 0x40000000.",
+  "Fifty reserved-memory regions exported from the live device tree, including BL31 at 0x48800000, tee-reserved at 0x70000000 and the framebuffer at 0xfc16f000.",
+  "The low window 0x40000000-0x47c80000 carries no reserved region and is the only contiguous space below the LK device tree block.",
+]
+configuration = [
+  "dts/tb375fc.dts sets the memory node to the measured range and keeps every reserved region out of it instead of restating them.",
+  "payload.dram_size is 0x200000000 so the ADT generator sees the full 8 GiB the bootloader reports.",
+]
+procedure = [
+  "Export /sys/firmware/fdt as root, decode it with dtc and list /reserved-memory with a script rather than transcribing addresses by hand.",
+  "Cross-check the decoded ranges against /proc/iomem, which reports the regions the kernel actually mapped.",
+]
+findings = [
+  "MemTotal reports 7,857,684 kB against an 8 GiB /memory node, and the difference is accounted for by the reserved regions rather than by a truncated memory node.",
+  "Because the framebuffer sits at 0xfc16f000 inside the top 64 MiB, any payload or kernel window placed high must first exclude mblock-14, mblock-22 to mblock-50 and the modem and DSP reservations.",
+]
+completion = [
+  "All handoff regions are accounted for and each enabled DMA engine accesses its allocated range with the documented cache policy.",
+]
+limits = [
+  "No DMA or SMMU owner has been assigned yet; the SMMU stream map for UFS, display and GPU is unmeasured.",
+]
+next_action = [
+  "Publish the decoded reserved-memory table from UniXNU-mt6897-common and use it to size the kernel window and payload placement.",
+]
+evidence = [
+  { kind = "source", reference = "dts/tb375fc.dts", result = "Memory node with the measured base and size, plus the /chosen initrd window the bootloader reserves." },
+  { kind = "source", reference = "evidence/live-fdt.dtb", result = "Live FDT carrying /memory reg <0x0 0x40000000 0x2 0x0> and the reserved-memory inventory decoded from the same blob." },
+  { kind = "source", reference = "evidence/iomem.txt", result = "/proc/iomem cross-check of the reserved regions the running kernel actually mapped." },
+]
+
+[[area]]
+id = "storage"
+status = "planned"
+components = []
+paths = ["package/**", "scripts/**"]
+inputs = [
+  "UFS host controller at 0x112b0000 with the UFS PHY at 0x112a0000, both mapped in /proc/iomem.",
+  "GPT with the A/B layout reported by /dev/block/by-name, including boot_a, boot_b, vendor_boot_a, dtbo_a, super, metadata and userdata.",
+]
+configuration = [
+  "No storage component is selected yet; RamBlock or a native MTK UFS driver has to be written before userdata can carry an OS window.",
+]
+procedure = [
+  "Record the GPT geometry from the rooted device before any partition window is chosen.",
+  "Implement a UEFI block driver first, because the payload FAT volume and the UniXNU configuration path are read through EFI_BLOCK_IO_PROTOCOL.",
+]
+findings = [
+  "The MediaTek UFS host is not covered by the shared SM8550 ShengUfs component, which is a Qualcomm implementation, so MTK UFS needs its own driver.",
+  "The bootloader exposes the by-name symlinks only to the running Android kernel, so the GPT has to be captured from the device rather than inferred from the scatter file.",
+]
+completion = [
+  "Host, PHY and link facts match the board inventory, the GPT and known blocks read back correctly, and the configured root volume mounts and starts launchd.",
+]
+limits = [
+  "No userdata geometry, APFS Data volume UUID or OS windows exist yet.",
+]
+next_action = [
+  "Capture the GPT from the rooted device and start an MTK UFS UEFI block driver so the payload volume can be read.",
+]
+evidence = []
+
+[[area]]
+id = "display"
+status = "planned"
+components = []
+paths = ["package/**", "scripts/**"]
+inputs = [
+  "Reserved framebuffer region at 0xfc16f000 sized 0x3e90000, roughly 62.6 MiB.",
+  "Display plane 1840x2944 with Android reporting primary_display_orientation ORIENTATION_270.",
+  "Display controllers mapped in /proc/iomem: dispsys-config 0x14000000, DSI0 0x1400d000, DSI1 0x1420d000, mipi-tx0 0x11e50000, mipi-tx1 0x11e60000, disp_pwm0 0x1100e000.",
+  "DTBO provides three NT36532 panel variants (BOE, Tianma, Tianma paper) and the active variant is not yet identified.",
+]
+configuration = [
+  "The bootstrap path relies on the bootloader painting the panel and the UEFI GOP publishing the reserved framebuffer, so no panel driver is needed for the first menu.",
+]
+procedure = [
+  "Confirm the active panel variant from the device before any MTK display driver work.",
+  "Publish the framebuffer through GOP and verify geometry, stride and colour order on the device.",
+]
+findings = [
+  "The framebuffer reservation is present in the live device tree, so the LK logo scanout already owns a defined region and the UEFI GOP can describe it instead of reprogramming DSI.",
+  "LK records its LCM driver name in /chosen/atag,videolfb as nt36532_dsi_vdo_144hz_tianma_lcm_drv, which selects the Tianma NT36532 variant out of the three DTBO advertises; this is a name match from the component that actually powers the panel, not an electrical measurement.",
+  "atag,videolfb carries only the framebuffer base 0xfc16f000, vram size 0x3e90000 and the LCM name; no 32-bit word in it equals 1840, 2944 or any derivable stride, so the framebuffer geometry has to come from the panel timing or the board configuration rather than the handoff.",
+  "The handoff also carries atag,videolfb-fb_base_l/h and atag,videolfb-vramSize as separate properties, which agree with the framebuffer reserved-memory region.",
+]
+completion = [
+  "A known frame appears with correct geometry and colors, then userland presentation and backlight controls work.",
+]
+limits = [
+  "The stride, pixel format and buffer count of the handed-over framebuffer are unmeasured; the panel variant is a name match, not a measurement.",
+]
+next_action = [
+  "On the first boot, confirm the framebuffer geometry and colour order from the rendered menu before publishing any display support claim.",
+]
+evidence = []
+
+[[area]]
+id = "input"
+status = "planned"
+components = []
+paths = ["package/**", "scripts/**"]
+inputs = [
+  "Touch controllers reported in the live device tree on i2c: hx9031as at address 0x28 and hx9036 at 0x1b, both Himax parts.",
+  "DTBO additionally carries a Novatek NVT-ts-spi overlay, so the active touch path is not yet settled.",
+  "SPI controllers 0x11010000 through 0x11017000 and i2c buses at 0x11d00000, 0x11f00000 and 0x11cc3000 are mapped.",
+]
+configuration = [
+  "No input component is selected yet; the bootstrap menu can use the UEFI console input if the bootloader leaves one available.",
+]
+procedure = [
+  "Confirm which touch controller is populated on this unit before selecting a component.",
+  "Record the interrupt line, bus and reset and report descriptors once the controller is known.",
+]
+findings = [
+  "The live tree shows Himax chips while DTBO advertises a Novatek overlay, which means the overlay set is shared across SKUs and the populated part must be measured.",
+]
+completion = [
+  "Touches map to the display, simultaneous contacts keep stable IDs, release events arrive, and buttons produce expected HID reports.",
+]
+limits = [
+  "The populated touch controller, its interrupt and its firmware are unmeasured.",
+]
+next_action = [
+  "Read the touch vendor attributes and input device list from the rooted device to settle the controller before any driver work.",
+]
+evidence = []
+
+[[area]]
+id = "gpu"
+status = "planned"
+components = []
+paths = ["package/**", "scripts/**"]
+inputs = [
+  "Mali GPU register block at 0x13000000-0x1347ffff and the GPU mailbox at 0x13c00000 from /proc/iomem.",
+  "The shared Adreno components target Qualcomm hardware and do not apply to a Mali GPU.",
+]
+configuration = [
+  "No GPU component is selected; the bootstrap milestone does not need GPU acceleration.",
+]
+procedure = [
+  "Record the GPU model and firmware from the device before any component selection.",
+  "Defer GPU work until the kernel and root volume are up.",
+]
+findings = [
+  "UniXNU's published GPU components are Adreno-specific, so MT6897 with a Mali GPU has no reusable kernel GPU driver in the upstream catalog.",
+]
+completion = [
+  "GPU submissions complete, mapping and fence handling is correct, a known image renders, and the selected Metal client presents it.",
+]
+limits = [
+  "No Mali driver exists upstream and no GPU bring-up is planned in this phase.",
+]
+next_action = [
+  "Record the GPU model and firmware version for the record; driver implementation follows after userspace.",
+]
+evidence = []
+
+[[area]]
+id = "network"
+status = "planned"
+components = []
+paths = ["package/**", "scripts/**"]
+inputs = [
+  "Reserved Wi-Fi DMA pool named shared-dma-pool_wifi-reserve-memory_dma at 0x8d900000 sized 0x1400000.",
+  "MediaTek connectivity subsystem reservation consys_emi_reserved at 0x8cc00000 sized 0xd00000.",
+  "CNSS and connsys controllers appear in the live device tree; the Wi-Fi part is not identified yet.",
+]
+configuration = [
+  "No network component is selected; the bootstrap milestone does not need networking.",
+]
+procedure = [
+  "Identify the Wi-Fi part number and firmware from the vendor partition before any component selection.",
+]
+findings = [
+  "MediaTek connectivity on this SoC is a CNSS/connsys design with its own firmware download path, which differs from the ath12k path UniXNU ships today.",
+]
+completion = [
+  "Scanning, association, address configuration and sustained traffic pass with the selected firmware.",
+]
+limits = [
+  "The Wi-Fi part, firmware and calibration live in vendor partitions that have not been read.",
+]
+next_action = [
+  "Read the connectivity firmware identity from the vendor partition on the rooted device.",
+]
+evidence = []
+
+[[area]]
+id = "audio"
+status = "planned"
+components = []
+paths = ["package/**", "scripts/**"]
+inputs = [
+  "Audio DSP reservation adsp_image_reserved at 0x7c000000 sized 0x1230000 and adsp_shared_reserved at 0xf8000000 sized 0x530000.",
+  "MediaTek AFE PCM controller at 0x11050000 from /proc/iomem.",
+]
+configuration = [
+  "No audio component is selected; audio follows userspace bring-up.",
+]
+procedure = [
+  "Record the codec, the DSP firmware and the speaker topology before selecting anything.",
+]
+findings = [
+  "MediaTek audio routes through ADSP with separate shared-memory reservations, so the reserved regions must be excluded from any kernel or payload window before audio work starts.",
+]
+completion = [
+  "DSP, codec, clock and firmware services are up and playback and recording pass.",
+]
+limits = [
+  "No audio work has started and the codec identity is unmeasured.",
+]
+next_action = [
+  "Record the codec and DSP firmware identity from the vendor partition.",
+]
+evidence = []
+
+[[area]]
+id = "power"
+status = "planned"
+components = []
+paths = ["package/**", "scripts/**"]
+inputs = [
+  "PMIC peers on i2c 0x11f01000 such as mt6375, rt6160 and rt5133, plus a backlight controller on 0x11cc3000.",
+  "Battery and charger are managed by the vendor health HAL on the Android side.",
+]
+configuration = [
+  "No power component is selected; the bootstrap milestone only needs the bootloader-owned regulators to stay on.",
+]
+procedure = [
+  "Record the PMIC topology and the regulators the boot chain depends on before adding any power component.",
+]
+findings = [
+  "The boot chain holds its regulators itself, so UEFI must not disable any supply it does not own; the first image only reads state.",
+]
+completion = [
+  "Regulators, clocks, battery units and firmware ownership are recorded and the supported power transitions work.",
+]
+limits = [
+  "No regulator inventory has been taken and no power component exists.",
+]
+next_action = [
+  "Record the PMIC and regulator topology from the live device tree.",
+]
+evidence = []
+
+[[area]]
+id = "packaging"
+status = "planned"
+components = []
+paths = ["board.toml", "scripts/**", "package/**"]
+inputs = [
+  "Bootstrap OS profile ipados-17.7.11-21H461 supplies the XNU version, prelink roots and ADT identity.",
+  "Stock boot geometry from boot.img header v4 requires a v4 packaging path with page size 4096 and a zero ramdisk.",
+  "uniXNU bootimg packs the FD as the gzip kernel and appends the firmware device tree.",
+]
+configuration = [
+  "payload.volume is TB375FCESP at 192 MiB, payload.loader is firmware and payload.adt carries chip_id and the required unique chip ID.",
+  "bootimg.image keeps header_version 4 and pagesize 4096 so the produced image matches what LK accepts on this vendor.",
+]
+procedure = [
+  "Build the payload, pack the boot image and verify the header, the FD window and the appended device tree offline before any device attempt.",
+]
+findings = [
+  "The stock boot image has a zero ramdisk while init_boot carries the generic ramdisk, so a zero ramdisk boot image is the shape that matches this boot chain.",
+]
+completion = [
+  "The boot image packs reproducibly, its header matches the recorded geometry and the offline verifier passes.",
+]
+limits = [
+  "No payload or boot image has been produced yet, and example stays true so build and bootimg refuse to run.",
+]
+next_action = [
+  "Complete the firmware package, then produce and verify the first boot image offline.",
+]
+evidence = []
+
+[[area]]
+id = "diagnostics"
+status = "planned"
+components = []
+paths = ["scripts/**", "package/**"]
+inputs = [
+  "Four 8250 serial ports are mapped at 0x11001000, 0x11002000, 0x11003000 and 0x11004000.",
+  "The stock cmdline sets mtk_printk_ctrl.disable_uart=1, so the UART is not necessarily a usable log channel as shipped.",
+  "No exposed UART header has been identified on the tablet.",
+]
+configuration = [
+  "The fallback log channel is the UniXNU Advanced Logger over GOP with QR export, which needs no storage or UART.",
+]
+procedure = [
+  "Integrate the Advanced Logger and its DXE plugin into the firmware package, then export the log through the Tools menu QR pages.",
+]
+findings = [
+  "Because the stock cmdline disables the UART and the tablet exposes no serial header, the firmware log has to reach the user through the screen rather than a cable.",
+]
+completion = [
+  "A log channel survives the first boot, the last confirmed stage is readable on the device and QR extraction works from the Tools menu.",
+]
+limits = [
+  "No logging channel has been integrated yet.",
+]
+next_action = [
+  "Add AdvancedLogDxe and the QR export to the firmware package before the first hardware attempt.",
+]
+evidence = []
+
+[[area]]
+id = "cellular"
+status = "not-applicable"
+components = []
+paths = ["board.toml"]
+inputs = [
+  "The stock package version string carries WIFI and no cellular modem, and the unit reports no baseband service.",
+]
+configuration = [
+  "No cellular configuration exists for this board.",
+]
+procedure = [
+  "Confirm from the package identity that this SKU is Wi-Fi only rather than recording a modem that is absent.",
+]
+findings = [
+  "TB375FC_CN_OPEN_USER_M21.814_V_ZUI_17.0.04.016_ST_250501_SW_P98300DA2_V016_WIFI_LENOVO_PERIDOTV_USR_MP identifies a Wi-Fi only model, so cellular is out of scope for this board.",
+]
+completion = [
+  "Not applicable: the board has no cellular modem.",
+]
+limits = [
+  "Out of scope because the SKU has no modem; the MediaTek modem firmware is present in the package for other SKUs.",
+]
+next_action = [
+  "No action; revisit only if a cellular TB375FC variant is ported.",
+]
+evidence = []

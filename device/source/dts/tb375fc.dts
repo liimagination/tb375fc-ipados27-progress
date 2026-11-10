@@ -1,0 +1,68 @@
+/dts-v1/;
+
+/*
+ * TB375FC board device tree (UniXNU format 2 device_tree.source).
+ *
+ * The shared MT6897 SoC resources (CPUs, GICv3, ARMv8 timer, PSCI) come from
+ * UniXNU-mt6897-common through include_dirs = ["soc:dts"]; dtc resolves
+ * /include/ against those directories. This file adds only what is board specific
+ * for the Lenovo Xiaoxin Pad Pro 12.7 (2025).
+ *
+ * Sources for every value below:
+ *   - live FDT from /sys/firmware/fdt of the running unit
+ *     sha256 41f658da5ec61963ca3848bd7f77ac56cb0b1128d95191520f2314840ee9fabc, 613,734 bytes
+ *   - stock vendor_boot.img header v4 of TB375FC_ZUX_1.1.04.016
+ *       kernel_addr 0x40000000, ramdisk_addr 0x66f00000, tags_addr 0x47c80000
+ *   - /proc/iomem
+ *
+ * UniXNU compiles this with plain dtc -I dts -O dtb (no C preprocessor), so the
+ * SoC file is pulled in with dtc's own /include/ directive.
+ */
+
+/include/ "mt6897.dtsi"
+
+/ {
+	model = "Lenovo Xiaoxin Pad Pro 12.7 (2025) TB375FC";
+	compatible = "lenovo,tb375fc", "mediatek,MT6897";
+	#address-cells = <2>;
+	#size-cells = <2>;
+
+	/*
+	 * live DT /memory: reg = <0x00 0x40000000 0x02 0x00>
+	 * 8 GiB of DRAM starting at 0x40000000; MemTotal reports 7,857,684 kB.
+	 */
+	memory@40000000 {
+		device_type = "memory";
+		reg = <0x00 0x40000000 0x02 0x00>;
+	};
+
+	/*
+	 * live DT /chosen: linux,initrd-start 0x66f00000, linux,initrd-end 0x68b246ed,
+	 * the same window the stock vendor_boot header v4 names as ramdisk_addr.
+	 */
+	chosen {
+		linux,initrd-start = <0x66f00000>;
+		linux,initrd-end = <0x68b246ed>;
+	};
+
+	/*
+	 * ArmDTPlatform reads timebase-frequency from /cpus. The live tree carries
+	 * 13,000,000 Hz on the generic timer, so the CPU timebase uses the same source.
+	 */
+	cpus {
+		timebase-frequency = <13000000>;
+	};
+
+	/*
+	 * Active panel variant. live DT /chosen/atag,videolfb records the LK LCM driver
+	 * name "nt36532_dsi_vdo_144hz_tianma_lcm_drv", which selects panel2@1
+	 * (compatible "tianma,nt36532,dsi,vdo") out of the three variants DTBO
+	 * advertises (BOE, Tianma, Tianma paper). Recorded here so the display area
+	 * has the variant on the board tree; no panel driver is bound yet.
+	 */
+	panel {
+		status = "disabled";
+		compatible = "tianma,nt36532,dsi,vdo";
+		lcm-driver-name = "nt36532_dsi_vdo_144hz_tianma_lcm_drv";
+	};
+};

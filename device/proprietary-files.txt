@@ -1,0 +1,12 @@
+# Required firmware inputs: relative path | source | SHA-256 | consumer
+# Hash values are of the padded stock images exactly as shipped in TB375FC_ZUX_1.1.04.016;
+# they describe the package, not the byte-for-byte contents of this unit's partitions.
+#
+# file                  | source                                              | sha256 | consumer
+boot.img                | TB375FC_ZUX_1.1.04.016/image/boot.img              | 57cce7b30b5da3cfe351d372ba17c5a88562c70c52540b7dda3d6565d5a4b96e | boot image geometry (v4, page 4096, kernel 16410321, ramdisk 0)
+vendor_boot.img         | TB375FC_ZUX_1.1.04.016/image/vendor_boot.img       | 935af3d217a57f9f9b39ec90772eacd1df77a92cefb73d1d4d14aeec5dd7db54 | LK handoff addresses, base MT6897 DTB
+dtbo.img                | TB375FC_ZUX_1.1.04.016/image/dtbo.img              | b4bf99ffe0520b96ba79d8101e02cbb69ae437dd62adc3955e110ec1b5113f8b | panel and touch overlays
+init_boot.img           | TB375FC_ZUX_1.1.04.016/image/init_boot.img         | a08cfdc7063bc237e85c88d4b09200ec6d078f40aa96b0e8e8e6712054382f2f | generic ramdisk geometry reference
+dtb (extracted)         | vendor_boot.img DT payload                          | fa26d193cba3503e31bad2f478fb4b38d63d73ee91c720e5afd1ae6aa2f081e0 | board DTS source, 411812 bytes
+dtbo overlay (entry 0)  | dtbo.img table entry 0                              | 0891a0c3e39095ff5426613a70547ebff8f9bca4f5f843312c115139deffc618 | panel variant / Novatek touch overlays
+live FDT (this unit)    | /sys/firmware/fdt on device HA227LJ3                | 41f658da5ec61963ca3848bd7f77ac56cb0b1128d95191520f2314840ee9fabc | measured DRAM, reserved-memory and IRQ wiring

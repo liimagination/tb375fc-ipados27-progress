@@ -1,0 +1,14 @@
+{
+  "partition": "init_boot_a",
+  "original_sha256": "175134b44de8ca3577acefb14aed68ecff26b23465bc024d471af159d95ce3f3",
+  "candidate_sha256": "048398d9169e8239ee7f89e94e82d0a74fcab9d879ce7c4eb9cb262ac72ef118",
+  "partition_bytes": 8388608,
+  "header_version": 4,
+  "kernel_bytes": 0,
+  "old_ramdisk_bytes": 2554718,
+  "new_ramdisk_bytes": 2097152,
+  "preserved": "original header page except ramdisk_size and signature_size",
+  "avb_signature": "removed in candidate; unlocked bootloader required",
+  "hardware_test": "NOT RUN",
+  "written_to_device": false
+}

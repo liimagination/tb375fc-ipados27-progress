@@ -1,0 +1,364 @@
+diff --git a/docs/drivers/xnu-prelink.md b/docs/drivers/xnu-prelink.md
+index a74c102..71fc558 100644
+--- a/docs/drivers/xnu-prelink.md
++++ b/docs/drivers/xnu-prelink.md
+@@ -7,6 +7,8 @@ Kernel prelink emitter and ABI tooling.
+ [Source repository](https://github.com/UniXNU/XnuPrelink).
+ 
+ XnuPrelink binds the built XNU kernel to selected original kexts and writes the prelink plan. The OS profile supplies the kernelcache pin, roots, slide, and ABI settings.
++Reviewed per-site bindings are checked within the selected dependency closure.
++A missing native symbol for a selected site remains an error.
+ 
+ For arm64e fileset kernel collections, `emit_prelink.py` selects the fileset
+ emitter and generates a function/data map. `--fileset-map FILE` supplies an
+@@ -81,3 +83,11 @@ original (unslid) imported targets. New unresolved data or stubbed calls fail
+ before replacing the last kernel candidate. This caught two lost order-based
+ matches during a full rebuild: `IOCircularDataQueueCopyLatest` and `get_aiotask`;
+ the reviewed fixture now identifies both by original digest and native symbol.
++
++For the 24A446 platform/CPU bindings, reviewed fixture evidence includes full original function hashes, source fields and argument/dispatch behavior. Identical method PAC values can occur in both base and derived implementations; select the matching implementation by its complete body. A zero-return base method cannot replace a derived forwarding method merely because their PAC values match. Hardware behavior requires separate validation.
++
++Use `emit_prelink.py --analysis-cache DIR` to reuse decoded inputs from a trusted local directory. Input bytes, header/fixup scope, analysis code and Python version form the cache identity. Updating reviewed bindings regenerates the matching map without repeating unchanged decoding. Complete a component review batch before running strict emission; a review queue is not a qualified pairing map.
++
++For reviewed metadata imports, distinguish a `metaClass` constant pointer from its `gMetaClass` pointee. Verify getters and class-name initialization references, and compare native pointer fixups. Vtable bindings require the class identity and complete slot authentication layout; account for the 16-byte difference between symbol base and runtime address point.
++
++Checked shapes may omit a function-entry BTI landing hint during comparison. Interior BTI and an internal branch back to that entry prevent treating it as disposable padding. This affects analysis only and does not remove runtime instructions.
+diff --git a/docs/porting/device-tree.md b/docs/porting/device-tree.md
+index c7096ec..925e64a 100644
+--- a/docs/porting/device-tree.md
++++ b/docs/porting/device-tree.md
+@@ -72,6 +72,13 @@ mapping. Each register range must have one matching translation. Referenced
+ providers require unique nonzero phandles and their argument-cell counts.
+ Interrupt specifiers must match the selected interrupt controller.
+ 
++The generator also publishes an `AAPL,phandle` alias for each exported node's
++`phandle` or `linux,phandle`. XNU's interrupt mapper registers that Apple name;
++the original FDT names are retained. Both input spellings must agree when
++present together, and the handle must be nonzero. An interrupt controller
++without `AAPL,phandle` can leave `interrupt-parent` unresolved during IOKit
++initialization.
++
+ The generator exports enabled nodes with `unixnu,adt-name`. Exported names are
+ unique. Add a typed binding in the common converter when a driver needs another
+ property. FDT integer cells are decoded before ADT encoding.
+diff --git a/docs/xnu/patch-reference.md b/docs/xnu/patch-reference.md
+index 389bf92..5d0b3a2 100644
+--- a/docs/xnu/patch-reference.md
++++ b/docs/xnu/patch-reference.md
+@@ -119,3 +119,11 @@ A patch that depends on another patch applies after it. A patch that changes a r
+ - [Source and patches](/xnu/source-and-patches)
+ - [Four-kilobyte pages](/xnu/four-k-page-tables)
+ - [Build the kernel](/guide/build-kernel)
++
++## iPadOS 27 AMFI stack granule
++
++The `ipados-27.0.1-24A446` OS patch series selects `patches/xnu-12377/native-amfi-stack-granule.patch`. It retains the live stack size and three guard pages, aligns allocations to the next power of two containing the live stack and guards, and exports `unixnu_kernel_stack_shift` for the reviewed AMFI DER stack-budget consumer. This is not a replacement for the VM page shift. Host geometry checks cover guard-before-alignment behavior; hardware AMFI execution remains unverified.
++
++## iPadOS 27 IOKit service-start permission check
++
++The selected OS series includes `patches/xnu-12377/native-iokit-start-check.patch`. The 24A446 service-start code invokes a two-argument MAC policy callback at offset `0x1e8`, with discriminator `0xe4fe`; this corresponds to `reserved22` in the selected public source. The patch gives that slot a local typed name, dispatches through the existing MAC framework, and makes `IOService::start` return false on denial. The local hook name is reconstructed from binary ABI evidence. Policy-table size and all other offsets stay unchanged. Host denial/argument tests and compiled call/slot/PAC checks are required; boot compatibility is separate.
+diff --git a/docs/zh/drivers/xnu-prelink.md b/docs/zh/drivers/xnu-prelink.md
+index 473c3dd..590850d 100644
+--- a/docs/zh/drivers/xnu-prelink.md
++++ b/docs/zh/drivers/xnu-prelink.md
+@@ -1,5 +1,7 @@
+ # XnuPrelink
+ 
++逐位置审核的绑定只检查所选依赖闭包内的位置。所选位置缺少原生符号时仍会报错。
++
+ 代码匹配会识别编译器插入的完整 PAC 失败检查序列，输出内核仍保留这些检查。
+ 两个生成入口都会核对匹配代码的签名，再复用已有映射。
+ `--fileset-reference FILE` 可以提供带符号的对照内核。唯一的代码匹配可提供符号名，
+@@ -71,3 +73,11 @@ XnuPrelink 将构建的 XNU 内核绑定到所选原始 kext，并写出预链
+ stub 调用会在替换上次内核产物前报错。完整重编曾丢失两个依赖顺序的匹配：
+ `IOCircularDataQueueCopyLatest` 和 `get_aiotask`；现在已根据源码和反汇编，
+ 用原函数摘要及 native 符号固定其身份。
++
++24A446 平台与 CPU 接口的已审查绑定记录了原始函数完整哈希、源码字段和参数及分派行为。基类和派生类实现可能共享方法 PAC，必须根据完整函数体选择实现；不能因 PAC 相同，就用只返回零的基类方法替换派生类转发方法。硬件行为仍需单独验证。
++
++`emit_prelink.py --analysis-cache DIR` 可从可信本地目录复用解码结果。缓存身份包含输入完整内容、头部及 fixup 范围、分析代码和 Python 版本。更新已审查绑定会重新生成匹配表，但无需重复解码未变化的输入。按组件完成一批核对后，再统一执行严格预链接；候选审查清单不是经过验证的匹配表。
++
++审查元类导入时，区分 `metaClass` 常量指针与它指向的 `gMetaClass` 对象，并用 getter、类名初始化引用和 native fixup 交叉验证。虚表绑定需要确认类身份以及完整槽位认证布局；虚表符号基址与运行时地址点相差 16 字节，不能混用偏移。
++
++比较检查后的机器码形状时，可以忽略函数入口的 BTI 提示指令。函数内部的 BTI 保留；若存在跳回入口的内部跳转，则不执行这项归一化。该规则仅影响分析，不会删除运行时指令。
+diff --git a/docs/zh/porting/device-tree.md b/docs/zh/porting/device-tree.md
+index 35cf665..4e5ca65 100644
+--- a/docs/zh/porting/device-tree.md
++++ b/docs/zh/porting/device-tree.md
+@@ -70,6 +70,11 @@ payload 步骤运行 `dtc`，在解析后的输出目录写入 `device-tree/hard
+ 匹配一条转换。引用目标的 phandle 必须非零且唯一，参数数量由提供者声明。
+ 中断描述符必须匹配选中的中断控制器。
+ 
++生成器还会为导出节点的 `phandle` 或 `linux,phandle` 发布 `AAPL,phandle`
++别名，并保留原 FDT 属性名。XNU 中断映射器使用 Apple 名称登记控制器。
++两个输入名称同时存在时数值必须一致，且不能为零。控制器缺少
++`AAPL,phandle` 会使 `interrupt-parent` 在 IOKit 初始化时无法解析。
++
+ 生成器导出带 `unixnu,adt-name` 的启用节点，导出名必须唯一。驱动需要其他属性时，
+ 在共享转换器中添加明确的类型绑定。FDT 整数 cell 先解码，再编码到 ADT。
+ 
+diff --git a/docs/zh/xnu/patch-reference.md b/docs/zh/xnu/patch-reference.md
+index 4de4d7b..0055866 100644
+--- a/docs/zh/xnu/patch-reference.md
++++ b/docs/zh/xnu/patch-reference.md
+@@ -121,3 +121,11 @@
+ - [源码与补丁](/zh/xnu/source-and-patches)
+ - [4 KiB 页表](/zh/xnu/four-k-page-tables)
+ - [构建内核](/zh/guide/build-kernel)
++
++## iPadOS 27 AMFI 栈粒度
++
++`ipados-27.0.1-24A446` 的 OS 补丁序列选择 `patches/xnu-12377/native-amfi-stack-granule.patch`。补丁保留有效栈大小和三张保护页，按能容纳有效栈及保护页的向上取整二次幂对齐分配，并导出 `unixnu_kernel_stack_shift`，供已审查的 AMFI DER 栈预算检查使用。它不是 VM 页移位的替代项。主机几何测试覆盖先保留保护页再对齐的行为，AMFI 实机执行尚未验证。
++
++## iPadOS 27 IOKit 服务启动权限检查
++
++选定 OS 补丁序列包含 `patches/xnu-12377/native-iokit-start-check.patch`。24A446 的服务启动代码调用策略表 `0x1e8` 偏移处的双参数 MAC 回调，PAC 类型值为 `0xe4fe`；该位置在选定公开源码中是 `reserved22`。补丁为此槽使用本地类型名，通过现有 MAC 框架分发，并让 `IOService::start` 在拒绝时返回 false。本地钩子名称依据二进制 ABI 重建，并不声称是原始符号名。策略表大小及其他偏移保持不变；需要主机拒绝/参数测试和实际机器码调用、槽位及 PAC 检查，实机启动另行验证。
+diff --git a/kits/XnuPrelink b/kits/XnuPrelink
+--- a/kits/XnuPrelink
++++ b/kits/XnuPrelink
+@@ -1 +1 @@
+-Subproject commit b1888c12456c46a2226d63c794465dfcee08d465
++Subproject commit b1888c12456c46a2226d63c794465dfcee08d465-dirty
+diff --git a/package/UniXNUPkg/Library/UniXNULib/Config.c b/package/UniXNUPkg/Library/UniXNULib/Config.c
+index ed39c6b..1d694bd 100644
+--- a/package/UniXNUPkg/Library/UniXNULib/Config.c
++++ b/package/UniXNUPkg/Library/UniXNULib/Config.c
+@@ -32,10 +32,22 @@
+ // firmware": the least surprising thing for an unattended machine, since
+ // the platform's boot manager then carries on as if UniXNU were absent.
+ //
++//
++// TB375FC bring-up: boot.timeout is -1, meaning "wait for input forever".
++//
++// The stock value of 10 made the menu paint, time out after ten seconds, pick
++// the default entry ("Return to firmware") and hand control back to BDS, which
++// then reported "No Operating System Found" and reset the board. On this board
++// the debug console is silenced and the panel is the only output, so a menu
++// that disappears after ten seconds is indistinguishable from a menu that
++// never appeared - which is what sent the bring-up chasing the wrong problem.
++// Every bring-up checkpoint, including "menu returned", was reached on the
++// unit on 2026-11-07 before this was understood.
++//
+ STATIC CONST CHAR8  mBuiltinConfig[] =
+   "version = 1\n"
+   "[boot]\n"
+-  "timeout = 10\n"
++  "timeout = -1\n"
+   "rotate = 2\n"
+   "[ui]\n"
+   "title = \"UniXNU\"\n"
+diff --git a/package/UniXNUPkg/Library/UniXNULib/Internal.h b/package/UniXNUPkg/Library/UniXNULib/Internal.h
+index 2524c40..f3e16c2 100644
+--- a/package/UniXNUPkg/Library/UniXNULib/Internal.h
++++ b/package/UniXNUPkg/Library/UniXNULib/Internal.h
+@@ -47,6 +47,18 @@ UniXNULogInit (
+   VOID
+   );
+ 
++//
++// Stop writing log lines into the framebuffer.
++//
++// Called once the UniXNU UI has taken over the panel. On boards whose only log
++// channel is a framebuffer console, continuing to log would repaint - and on
++// scroll, wipe - the menu that was just drawn.
++//
++VOID
++UniXNULogYieldPanel (
++  VOID
++  );
++
+ VOID
+ EFIAPI
+ UniXNULog (
+diff --git a/package/UniXNUPkg/Library/UniXNULib/Main.c b/package/UniXNUPkg/Library/UniXNULib/Main.c
+index c54a57a..3134ca0 100644
+--- a/package/UniXNUPkg/Library/UniXNULib/Main.c
++++ b/package/UniXNUPkg/Library/UniXNULib/Main.c
+@@ -11,6 +11,32 @@
+ 
+ STATIC EFI_SERIAL_IO_PROTOCOL  *mSerial;
+ 
++//
++// TB375FC: once the UniXNU UI owns the panel, the debug console must stop
++// writing to it.
++//
++// On this board the only log channel is FrameBufferSerialPortLib, which paints
++// text straight into the same framebuffer the menu draws into. When the
++// console scrolls past its last row it calls ZeroMem over the whole visible
++// surface, which erases the menu that was just drawn: the panel ends up
++// showing the last log line and nothing else. That is exactly the state the
++// unit was stuck in on 2026-11-07 - "menu: shown 4 entries" and a blank panel.
++//
++// The menu draws first (Menu.c calls UniXNUUiDrawFrame) and logs second, so
++// the log line that reports the menu is what destroys it. Setting this flag
++// when the UI enters graphics mode keeps the panel stable; the serial port, if
++// one exists, still receives every line.
++//
++STATIC BOOLEAN  mPanelOwnedByUi = FALSE;
++
++VOID
++UniXNULogYieldPanel (
++  VOID
++  )
++{
++  mPanelOwnedByUi = TRUE;
++}
++
+ VOID
+ UniXNULogInit (
+   VOID
+@@ -39,7 +65,10 @@ UniXNULog (
+   VA_END (Args);
+   AsciiStrCatS (Line, sizeof (Line), "\r\n");
+ 
+-  DEBUG ((PcdGet32 (PcdUniXNUDebugLevel), "%a", Line));
++  if (!mPanelOwnedByUi) {
++    DEBUG ((PcdGet32 (PcdUniXNUDebugLevel), "%a", Line));
++  }
++
+   if (mSerial != NULL) {
+     Size = AsciiStrLen (Line);
+     mSerial->Write (mSerial, &Size, Line);
+@@ -168,4 +197,4 @@ UniXNURun (
+     gBS->SetWatchdogTimer (0, 0, 0, NULL);
+     Countdown = FALSE;
+   }
+-}
++}
+\ No newline at end of file
+diff --git a/package/UniXNUPkg/Library/UniXNULib/Menu.c b/package/UniXNUPkg/Library/UniXNULib/Menu.c
+index e3e4619..3d849a0 100644
+--- a/package/UniXNUPkg/Library/UniXNULib/Menu.c
++++ b/package/UniXNUPkg/Library/UniXNULib/Menu.c
+@@ -124,6 +124,27 @@ UniXNUMenuRun (
+     RotateMs = DEFAULT_ROTATE_SEC * 1000;
+   }
+ 
++  //
++  // Log BEFORE drawing, never after.
++  //
++  // On a board whose only log channel is a framebuffer console, the console
++  // and this menu share one surface. Logging after drawing therefore destroys
++  // the very frame it is reporting: the console paints the line over the menu,
++  // and once it scrolls past its last row it clears the whole visible area.
++  // That is exactly the state the TB375FC unit was stuck in - a menu that had
++  // been drawn correctly, replaced by a single line reading "menu: shown 4
++  // entries". Measured on 2026-11-07.
++  //
++  UniXNULog (
++    "menu: shown %u entries, default %u '%a', timeout %d ms, input %a, rotate %u ms",
++    (UINT32)Count,
++    (UINT32)Config->DefaultIndex,
++    (Config->Entries[Config->DefaultIndex].Id != NULL) ? Config->Entries[Config->DefaultIndex].Id : "?",
++    (INT32)RemainingMs,
++    HasInput ? "yes" : "no",
++    (UINT32)RotateMs
++    );
++
+   UniXNUUiDrawFrame (Ui, Config);
+   for (Index = 0; Index < Count; Index++) {
+     UniXNUUiDrawEntry (Ui, Config, Index, Index == Selected);
+@@ -139,16 +160,6 @@ UniXNUMenuRun (
+     UniXNUUiDrawStatus (Ui, 2, Ui->Notice);
+   }
+ 
+-  UniXNULog (
+-    "menu: shown %u entries, default %u '%a', timeout %d ms, input %a, rotate %u ms",
+-    (UINT32)Count,
+-    (UINT32)Config->DefaultIndex,
+-    (Config->Entries[Config->DefaultIndex].Id != NULL) ? Config->Entries[Config->DefaultIndex].Id : "?",
+-    (INT32)RemainingMs,
+-    HasInput ? "yes" : "no",
+-    (UINT32)RotateMs
+-    );
+-
+   if (RemainingMs == 0) {
+     UniXNULog ("menu: timeout 0, booting default");
+     return Config->DefaultIndex;
+@@ -480,4 +491,4 @@ UniXNUMenuConfirm (
+ 
+     return FALSE;
+   }
+-}
++}
+\ No newline at end of file
+diff --git a/package/UniXNUPkg/Library/UniXNULib/Ui.c b/package/UniXNUPkg/Library/UniXNULib/Ui.c
+index 4b06ab4..393a036 100644
+--- a/package/UniXNUPkg/Library/UniXNULib/Ui.c
++++ b/package/UniXNUPkg/Library/UniXNULib/Ui.c
+@@ -691,6 +691,13 @@ UniXNUUiInit (
+ 
+   if (Ui->Mode == UniXNUUiGraphics) {
+     UniXNULog ("ui: graphics %ux%u, scale %u, %a layout", Ui->Width, Ui->Height, (UINT32)Ui->Scale, Ui->Portrait ? "portrait" : "landscape");
++
++    //
++    // The menu is about to be drawn into this same framebuffer. Stop logging
++    // to it, or the console's scroll-clear will erase the menu (see the long
++    // note in Main.c).
++    //
++    UniXNULogYieldPanel ();
+   } else if (Ui->Mode == UniXNUUiText) {
+     UniXNULog ("ui: text console %ux%u", (UINT32)Ui->TextColumns, (UINT32)Ui->TextRows);
+   } else {
+@@ -915,4 +922,4 @@ UniXNUUiDrawStatus (
+   Y  = Ui->FooterTop + Line * (Ch + Ch / 3);
+   FillRect (Ui, 0, Y, Ui->Width, Ch, mBackground);
+   DrawCentered (Ui, Y, Text, Ui->Scale, (Line == 0) ? mText : mDim);
+-}
++}
+\ No newline at end of file
+diff --git a/profiles/os/ipados-27.0.1-24A446/patches/xnu/series b/profiles/os/ipados-27.0.1-24A446/patches/xnu/series
+index 9acf0c6..094dfb7 100644
+--- a/profiles/os/ipados-27.0.1-24A446/patches/xnu/series
++++ b/profiles/os/ipados-27.0.1-24A446/patches/xnu/series
+@@ -4,3 +4,5 @@ arch:../../../patches/xnu-12377/zzz-boot-progress.patch
+ arch:../../../patches/xnu-12377/darwin26-syscalls.patch
+ arch:../../../patches/xnu-12377/darwin26-kpi.patch
+ arch:../../../patches/xnu-12377/darwin26-shared-region.patch
++arch:../../../patches/xnu-12377/native-amfi-stack-granule.patch
++arch:../../../patches/xnu-12377/native-iokit-start-check.patch
+diff --git a/scripts/unixnu/devicetree.py b/scripts/unixnu/devicetree.py
+index bbb1fe6..97f2732 100644
+--- a/scripts/unixnu/devicetree.py
++++ b/scripts/unixnu/devicetree.py
+@@ -209,6 +209,15 @@ FLAGS = {'interrupt-controller', 'dma-coherent'}
+ REFERENCES = {'interrupt-parent': None, 'iommus': '#iommu-cells', 'clocks': '#clock-cells'}
+ 
+ 
++def node_phandle(entry):
++    values = [entry.scalar(key) for key in ('phandle', 'linux,phandle') if key in entry.properties]
++    if not values:
++        return None
++    if not values[0] or len(set(values)) != 1:
++        raise Error(f'{entry.name}: FDT phandles must agree and be nonzero')
++    return values[0]
++
++
+ def hardware_properties(entry, handles, base=0):
+     properties = []
+     for key, raw in entry.properties.items():
+@@ -253,6 +262,11 @@ def hardware_properties(entry, handles, base=0):
+         elif key == 'reg':
+             pairs = [(physical(entry.parent, address, size) - base, size) for address, size in registers(entry)]
+             properties.append((key, b''.join(struct.pack('<QQ', *pair) for pair in pairs)))
++    # XNU's AddPHandle/FindPHandle register this Apple spelling. Preserve the
++    # original FDT properties for consumers, but supply its IOKit alias too.
++    handle = node_phandle(entry)
++    if handle is not None:
++        properties.append(('AAPL,phandle', struct.pack('<I', handle)))
+     return properties
+ 
+ 
+@@ -292,9 +306,9 @@ def generate(dtb, config, *, unique_chip_id=None, data=False, trust=False, addon
+     entries = list(root.walk())
+     handles = {}
+     for entry in entries:
+-        if 'phandle' in entry.properties:
+-            handle = entry.scalar('phandle')
+-            if not handle or handle in handles:
++        handle = node_phandle(entry)
++        if handle is not None:
++            if handle in handles:
+                 raise Error('FDT phandles must be unique and nonzero')
+             handles[handle] = entry
+     payload, platform = config.get('payload', {}), config.get('adt', {})

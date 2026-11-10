@@ -1,0 +1,20 @@
+{
+  "boot_sha256": "2b5cb91697b7162e4862dc6c0b8bf9c9fcac99cb6987df4bb81df2bc497c70ba",
+  "user_observation": "Initially green, then full-screen patterned corruption. No readable panic message.",
+  "images": [
+    "C:/WINDOWS/TEMP/codex-clipboard-05036e91-09a3-49b7-a65b-bd3106c04f98.png",
+    "C:/WINDOWS/TEMP/codex-clipboard-06f8983e-6c8d-47d4-b63e-5e0b6599dc22.png"
+  ],
+  "video_geometry_from_loader_photo": {
+    "base": "0xfd619000",
+    "display": 1,
+    "row_bytes": 11776,
+    "width": 2944,
+    "height": 1840,
+    "depth": 32
+  },
+  "confirmed_stage": "DarwinEnter pre-cache/MMU-off green marker only",
+  "kernel_boot_confirmed": false,
+  "cause": "Undetermined; framebuffer parameters match the working firmware menu. Neither a successful XNU entry nor the MMU transition is established by these photos.",
+  "next_test": "Official post-MMU timed PSCI reset checkpoint, adapted to measured 13MHz timer."
+}

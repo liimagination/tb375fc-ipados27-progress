@@ -1,0 +1,21 @@
+{
+  "time_utc": "2026-11-08T10:36:03.092921+00:00",
+  "explicit_test_authorized": true,
+  "serial": "HA227LJ3",
+  "product": "P98300DA2",
+  "current_slot": "a",
+  "partition": "boot_a",
+  "partition_bytes": 67108864,
+  "image": "boot-image4-test.img",
+  "sha256": "59841a20bf65e63fdacb242c4efe9f61aadbcf708dbf21de1067083c33ef9fa7",
+  "image_bytes": 19345408,
+  "fastboot_send_ok": true,
+  "fastboot_write_ok": true,
+  "flash_exit_code": 0,
+  "reboot_command_ok": true,
+  "reboot_exit_code": 0,
+  "device_written": true,
+  "hardware_boot_result": "User reports SEC FwVol.c assertion before menu; exact line unreadable",
+  "menu_entered": false,
+  "kernel_entered": false
+}

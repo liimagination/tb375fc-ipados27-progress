@@ -1,0 +1,20 @@
+# Generated and device-specific artifacts excluded from this repo
+*.img
+*.fd
+*.macho
+*.dtb
+*.bin
+*.elf
+*.lzma
+*.lz4
+*.zip
+*.7z
+*.log
+*.core
+*.dSYM/
+Build/
+out/
+.cache/
+__pycache__/
+local.toml
+**/private/**

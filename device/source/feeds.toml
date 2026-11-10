@@ -1,0 +1,15 @@
+# External sources of this device. The MT6897 shared SoC repository is not published upstream,
+# so it is developed next to this checkout and selected through the git-ignored local.toml:
+#
+#   [[source]]
+#   kind = "soc"
+#   name = "mt6897"
+#   local = "../../UniXNU-mt6897-common"
+#
+# Replace the git/commit pair below with a reviewed 40-character commit once the SoC
+# repository is published; the local override then keeps working for this workstation.
+[[source]]
+name = "mt6897"
+kind = "soc"
+git = "https://github.com/REPLACE/UniXNU-mt6897-common"
+commit = "REQUIRED_SOC_COMMIT"

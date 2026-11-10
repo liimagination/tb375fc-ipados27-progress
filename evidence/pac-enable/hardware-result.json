@@ -1,0 +1,13 @@
+{
+  "ENIA": 1,
+  "CLEAN": "Success",
+  "scope": "BSP EL1 only",
+  "KEY": "10/10",
+  "other_CPUs": "not tested",
+  "source": "User confirmed expected values and CLEAN=Success",
+  "RESTORE": 1,
+  "AUTH": 1,
+  "SIGN": 1,
+  "TRAPS": 0,
+  "EL0": "not tested"
+}

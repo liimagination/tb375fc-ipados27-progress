@@ -1,0 +1,9 @@
+{
+  "entry_blue_bar_verified": true,
+  "entry_continues_to_original_start_first_cpu": true,
+  "pre_mmu_magenta_bar_verified": true,
+  "post_mmu_original_instruction_verified": true,
+  "post_mmu_timed_reset_absent": true,
+  "panic_hooks_present": true,
+  "hardware_boot_confirmed": false
+}

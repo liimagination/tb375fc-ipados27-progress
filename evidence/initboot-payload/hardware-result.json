@@ -1,0 +1,9 @@
+{
+  "init_boot_a": "initboot-payload/init_boot_a.payload.img",
+  "boot_a": "initboot-payload/boot-payload.img",
+  "evidence": "User confirmed title TB375FC payload FAT detected",
+  "result": "passed",
+  "scope": "FAT payload and external configuration discovery only",
+  "restore": "Both boot_a and init_boot_a must be restored for Android",
+  "xnu": "not built or booted"
+}

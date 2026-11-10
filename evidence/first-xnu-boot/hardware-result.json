@@ -1,0 +1,9 @@
+{
+  "boot_sha256": "3df3befa146dec6eaccb6cd4a08d4b02bad7104cb9a57e69ff2770dae0b8e817",
+  "flash_partition": "boot_a",
+  "flash_succeeded": true,
+  "user_observation": "A green bar appeared first; then the left part became light grey and the right part showed repeating blue/purple corruption. No readable kernel output.",
+  "evidence_image": "C:/WINDOWS/TEMP/codex-clipboard-791c1d52-aa73-4583-b80c-cd5103e0c966.png",
+  "interpretation": "The green pre-handoff marker was observed. XNU entry, MMU transition and successful kernel boot remain unconfirmed. Display corruption alone does not identify the cause.",
+  "next_candidate": "../xnu-panic-test/boot-xnu-entry.img"
+}

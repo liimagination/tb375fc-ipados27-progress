@@ -1,0 +1,12 @@
+{
+  "boot_sha256": "b4f55025b747568d6b535b93069617e7653f0f14cd23284df18a02b7d50793fd",
+  "evidence_image": "C:/WINDOWS/TEMP/codex-clipboard-01dde114-cdd4-4249-b8ea-b9501cc89a79.png",
+  "panic": "image4 interface not available @kern_trustcache.c:592",
+  "first_frame": "0xfffffff0078bc304",
+  "symbol": "trust_cache_runtime_init",
+  "last_confirmed_stage": "XNU trust-cache runtime initialization",
+  "previous_IODT_null_dereference_observed": false,
+  "interpretation": "The ADT handle correction allowed execution to advance beyond the previous IOKit interrupt-map panic. The source trust-cache initializer now detects img4if == NULL. This native-only image does not include the original AppleImage4/AMFI kext closure.",
+  "complete_kernel_boot_confirmed": false,
+  "next_stage": "Prepare the selected iPadOS 27 profile's original-kext prelink and early security initialization, with ABI/mapping reports. No image was written in response to this observation."
+}

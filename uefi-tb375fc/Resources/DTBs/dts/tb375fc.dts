@@ -1,0 +1,39 @@
+/dts-v1/;
+
+/*
+ * TB375FC firmware device tree (published as the EFI DTB configuration table and
+ * appended to the boot image). Values: live FDT from /sys/firmware/fdt on the unit.
+ */
+
+/include/ "mt6897.dtsi"
+
+/ {
+	model = "Lenovo Xiaoxin Pad Pro 12.7 (2025) TB375FC";
+	compatible = "lenovo,tb375fc", "mediatek,MT6897";
+	#address-cells = <2>;
+	#size-cells = <2>;
+
+	memory@40000000 {
+		device_type = "memory";
+		reg = <0x00 0x40000000 0x02 0x00>;
+	};
+
+	chosen {
+		linux,initrd-start = <0x66f00000>;
+		linux,initrd-end = <0x68b246ed>;
+	};
+
+	cpus {
+		timebase-frequency = <13000000>;
+	};
+
+	/* Framebuffer handed over by LK (atag,videolfb-fb_base_l + atag,videolfb-vramSize). */
+	framebuffer@fc16f000 {
+		compatible = "simple-framebuffer";
+		reg = <0x00 0xfc16f000 0x00 0x3e90000>;
+		width = <1840>;
+		height = <2944>;
+		stride = <7360>;
+		format = "a8r8g8b8";
+	};
+};

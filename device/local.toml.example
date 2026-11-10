@@ -1,0 +1,8 @@
+# Copy to local.toml (ignored by Git) to point whole categories at local directories, or to
+# override a named source. Each subdirectory is one module. The command line (--local,
+# --local-drivers, ...) takes precedence.
+
+[[source]]
+kind = "soc"
+name = "mt6897"
+local = "../../UniXNU-mt6897-common"

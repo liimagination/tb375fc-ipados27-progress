@@ -1,0 +1,8 @@
+{
+  "boot_sha256": "e738ebd0c6b736ca8d370f2e83602821e5ac950ad7f21494182715afe0aeba45",
+  "user_observation": "Remained at the corrupted screen; no automatic reset observed.",
+  "post_mmu_checkpoint_observed": false,
+  "kernel_boot_confirmed": false,
+  "interpretation": "No positive checkpoint signal. Earlier execution failure, a fault in the probe, or a failed reset request are still possible. Absence of reset does not prove non-execution.",
+  "next_test": "Isolated checkpoints before MMU disable, after MMU disable, and at the kernel first entry, without MMU-off framebuffer writes."
+}

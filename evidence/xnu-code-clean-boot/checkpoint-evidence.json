@@ -1,0 +1,20 @@
+{
+  "kernel_sha256": "0ee9c072e3c323cb3472771d5f55cf4b9bd8298de337ccf7153f7351372df34b",
+  "original_kernel_sha256": "5c7f78fdfe1e801ac0ebfaeab70aaf4b8bc742a505e93db3c3b9735245560e3b",
+  "kernel_entry_va": "0xfffffff00753a488",
+  "no_mmu_off_framebuffer_writes": false,
+  "original_xnu_bootstrap_runs": true,
+  "loader_c_sha256": "17b9d48c3da8b88959c783265740b7d9cf932fa9ba35297bc8fdd4c7543c58d7",
+  "loader_assembly_sha256": "fc35824d879119435b916661261430112af01a939c49b58d78a1127866e3b2dd",
+  "loader_code_clean_to_poc": true,
+  "identity_mapping_guard": true,
+  "intentional_reset_enabled": false,
+  "previous_hardware_result": "B and C reset without corruption; user confirmed",
+  "current_hardware_result": "pending",
+  "adt_unchanged": true,
+  "entry_bars": [
+    "blue at entry",
+    "magenta before MMU enable"
+  ],
+  "panic_screen": true
+}

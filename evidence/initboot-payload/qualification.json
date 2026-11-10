@@ -1,0 +1,13 @@
+{
+  "stage": "FAT payload/config discovery, not XNU or iPadOS boot",
+  "handoff": "LK x0 saved in x19 -> SecEntry third argument -> entry-argument GUID HOB",
+  "kernel_bytes": 638009,
+  "ramdisk_bytes": 2097152,
+  "boot_bytes": 2740224,
+  "header_version": 4,
+  "signature_bytes": 0,
+  "compressed_fd_roundtrip": true,
+  "packed_payload_matches": true,
+  "sha256": "02b511bfac0cfa5fa6436e541c2b7c1cad6097e9870da93b514285e4a826a10f",
+  "hardware_test": "pending"
+}

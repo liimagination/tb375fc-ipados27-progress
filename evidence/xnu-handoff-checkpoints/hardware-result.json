@@ -1,0 +1,19 @@
+{
+  "boot_sha256": "4ff9c1265a88ae9c2ae1a171dcb37ffa8d00fe1457f3ab5065b00009c48e8126",
+  "observations": {
+    "A_pre_mmu_off": {
+      "user_report": "Stayed on the green bar, then rebooted.",
+      "expected_reset_observed": true,
+      "delay_seconds_measured": null,
+      "interpretation": "Consistent with reaching the loader checkpoint after cache maintenance and before MMU shutdown. The timer/reset path works in this firmware state; this does not establish behavior with MMU disabled."
+    },
+    "B_post_mmu_off": {
+      "user_report": "Remained at the corrupted screen; no automatic reboot.",
+      "expected_reset_observed": false,
+      "interpretation": "A reset works before MMU shutdown, but no B signal is observed after MMU/cache disable and TLB synchronization. This narrows investigation to that transition and the probe path in that CPU state; it does not establish a fault in XNU startup."
+    },
+    "C_kernel_entry": {"status": "deferred_until_B_resolved"}
+  },
+  "kernel_boot_confirmed": false,
+  "next_test": "Review and correct loader transition code/cache handling before further XNU bootstrap tests."
+}

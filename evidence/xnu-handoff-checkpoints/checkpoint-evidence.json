@@ -1,0 +1,18 @@
+{
+  "kernel_sha256": "807be0c82fd31a436a3ee45a603ced769cf9e5b1563b078bb3e38c33fce790b3",
+  "original_kernel_sha256": "5c7f78fdfe1e801ac0ebfaeab70aaf4b8bc742a505e93db3c3b9735245560e3b",
+  "kernel_entry_va": "0xfffffff00753a488",
+  "kernel_reset_cave_va": "0xfffffff00753a500",
+  "kernel_reset_code": "22e03bd503e03bd5c40080d26308049bdf3f03d522e03bd55f0003eba3ffff54200180520080b072e1031faae2031faae3031faa030000d45f2003d5ffffff17",
+  "timer": "CNTFRQ_EL0",
+  "delay_seconds": 6,
+  "no_mmu_off_framebuffer_writes": true,
+  "original_xnu_bootstrap_runs": false,
+  "loader_c_sha256": "d0dc4ef0ca6aa92b9fcb2e00e46cb8db23786e5e55b34915b53f9e5b194e0bce",
+  "loader_assembly_sha256": "6d9bfa9ef87f9be66e0e1b3e45db85d3dd68943ed721478f81318c222335e027",
+  "checkpoint_arguments": [
+    "tb375fc-handoff=pre-mmu",
+    "tb375fc-handoff=post-mmu",
+    "-v serial=3"
+  ]
+}

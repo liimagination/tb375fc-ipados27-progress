@@ -1,0 +1,957 @@
+diff --git a/README.md b/README.md
+index 86e2510..176f084 100644
+--- a/README.md
++++ b/README.md
+@@ -14,6 +14,9 @@ be reused. The ordinary ARM64 prelink interface remains available.
+ The fileset emitter places the collection root at the native kernel's link
+ address, marks the copied kernel as a fileset member, rebases metadata and
+ keeps only the selected roots and their dependencies in the fileset index.
++Reviewed per-site bindings require native symbols only for sites within that
++selected dependency closure. A selected site with a missing symbol still stops
++emission; selecting every component retains the full fixture checks.
+ The legacy `--slide` value does not apply to filesets. Rebuilt chains use
+ virtual offsets, including across native BSS gaps.
+ 
+@@ -79,3 +82,11 @@ The 24A446 fixture also pins `IOCircularDataQueueCopyLatest` and `get_aiotask`.
+ A complete rebuild of the native adapter archives changed the RELEASE reference
+ layout and lost these two order-based matches. Their original function digests,
+ source consumers and accessor/copy semantics are recorded in the fixture.
++
++The 24A446 fixture records reviewed platform and CPU methods with full original function digests. Small accessors use byte-identical bodies after removing the original BTI entry, plus PAC identity and source fields. Forwarding methods record dispatch slots, argument flow and error returns. Shared override PAC values alone do not distinguish base methods from derived methods; the full body must establish the selected implementation. These records do not qualify hardware behavior.
++
++`emit_prelink.py --analysis-cache DIR` enables a trusted local decoded-image cache. Keys include full image content, Mach-O header and fixup scope, analysis implementation and Python version. Reviewed binding fixtures invalidate pairing maps independently while decoded inputs remain reusable. Corrupt cache entries are rebuilt; writes use atomic replacement. Keep this pickle directory local and trusted. Without the option, decoded inputs are still shared across reference-matching recursion in a single run. The existing exact-input map checks and strict missing-reference policy remain in effect.
++
++Reviewed 24A446 metadata bindings distinguish `Class::metaClass` constant pointer variables from their `Class::gMetaClass` objects. Getter and class-name initializer evidence identifies the pointee; native fixups verify the pointer level. Reviewed class-vtable bases additionally require class identity plus complete slot-count/authentication-layout agreement. A runtime virtual offset is relative to the address point (`vtable symbol + 16`), not the symbol base. This evidence identifies ABI layout and does not establish driver runtime compatibility.
++
++Checked-shape analysis also normalizes a single entry BTI C/J/JC landing hint when a body follows it. Interior BTI remains part of the shape, and an internal branch targeting the removed entry disables normalization. Emitted instructions are unchanged; unique matching and exact-input validation still apply.
+diff --git a/emit_prelink.py b/emit_prelink.py
+index 0c104a6..9f7a962 100644
+--- a/emit_prelink.py
++++ b/emit_prelink.py
+@@ -315,6 +315,7 @@ def main():
+     parser.add_argument('--output', required=True, type=Path)
+     parser.add_argument('--early-security-init', action='append', default=[], metavar='BUNDLE=ORIGINAL_VA',
+                         help='Explicit original void(void) policy initializer, called before lockdown; requires source ABI')
++    parser.add_argument('--analysis-cache', type=Path, help='trusted local decoded-image cache; exact input and analysis code keyed')
+     parser.add_argument('--fileset-map', type=Path, help='existing exact-input pairing for an MH_FILESET cache')
+     parser.add_argument('--fileset-reference', type=Path, help='symbol-bearing comparison kernel for fileset matching')
+     parser.add_argument('--allow-missing', action='store_true',
+@@ -354,7 +355,11 @@ def main():
+                 except ValueError:
+                     pass
+             if pairing is None:
+-                pairing = match_images(original_data, native_data, reference_data=reference_data)
++                from fileset_cache import AnalysisCache
++                analysis_cache = AnalysisCache(args.analysis_cache) if args.analysis_cache else None
++                pairing = match_images(original_data, native_data, reference_data=reference_data, analysis_cache=analysis_cache)
++                if analysis_cache:
++                    print(f'analysis cache: {analysis_cache.hits} hits, {analysis_cache.misses} misses')
+                 atomic_write(map_path, (json.dumps(pairing, indent=2) + '\n').encode())
+         # An experimental image binds every unmatched function start to the
+         # panic stub, so an unknown call reports its site instead of jumping to
+diff --git a/fileset_emit.py b/fileset_emit.py
+index fcd8b42..17e399a 100755
+--- a/fileset_emit.py
++++ b/fileset_emit.py
+@@ -648,7 +648,7 @@ class Emit:
+         self.report['native_fileoff'] = f'{self.fileoff:#x}'
+ 
+ 
+-def reviewed_sites(inputs, native, collection_slide):
++def reviewed_sites(inputs, native, collection_slide, selected_ranges=None):
+     """Reviewed per-site bindings: one original pointer site (a component's GOT slot) bound to a named native object.
+     Used when a kernel object means different things to different consumers, so pairing its target is not enough."""
+     names = {}
+@@ -662,11 +662,14 @@ def reviewed_sites(inputs, native, collection_slide):
+         if (pinned['kernelcache_sha256'], pinned['entry']) != (inputs['kernelcache_sha256'], inputs['entry']):
+             continue
+         for entry in record.get('sites', []):
++            site = (int(entry['site'], 16) + collection_slide) & MASK64
++            if selected_ranges is not None and not any(start <= site < end for start, end in selected_ranges):
++                continue
+             if not entry.get('evidence'):
+                 raise ValueError('Reviewed site requires recorded evidence')
+             if entry['native_symbol'] not in names:
+                 raise ValueError(f'Reviewed site names a missing native symbol: {entry["native_symbol"]}')
+-            sites[(int(entry['site'], 16) + collection_slide) & MASK64] = names[entry['native_symbol']]
++            sites[site] = names[entry['native_symbol']]
+     return sites
+ 
+ 
+@@ -699,7 +702,12 @@ def emit_images(raw, native_data, payload, roots, stub_symbol=None, early_securi
+     pairs = {(address + collection_slide) & MASK64: target for address, target in pairs.items()}
+     from fileset_segmented import SegmentedEmit
+     emit = SegmentedEmit(cache, native, pairs, closure)
+-    emit.site_pairs = reviewed_sites(inputs, native, collection_slide)
++    selected_ranges = None
++    if closure is not None:
++        selected_ranges = [(s['va'], s['va'] + s['size'])
++                           for identifier, (_, offset) in cache.entries.items() if identifier in closure
++                           for s in Image(cache.data, offset).segments]
++    emit.site_pairs = reviewed_sites(inputs, native, collection_slide, selected_ranges)
+     emit.stub, emit.stubbed = None, defaultdict(Counter)
+     emit.old_starts = set(emit.old.function_starts())
+     if stub_symbol:
+diff --git a/fileset_match.py b/fileset_match.py
+index c3e4206..ae0c88d 100755
+--- a/fileset_match.py
++++ b/fileset_match.py
+@@ -999,18 +999,28 @@ class Matcher:
+         return payload
+ 
+ 
+-def match_images(raw, native_data, entry_name='com.apple.kernel', max_rounds=40, reference_data=None, pure_leaves=True):
++def match_images(raw, native_data, entry_name='com.apple.kernel', max_rounds=40, reference_data=None, pure_leaves=True, analysis_cache=None, _sides=None):
+     """Build a map bound to the exact two input images."""
+     cache = Image(raw)
+     if entry_name not in cache.entries:
+         raise ValueError(f'No fileset entry {entry_name!r}')
+     _, at = cache.entries[entry_name]
+     entry = Image(raw, at)
+-    fixups = cache.fixups()
+-    original = Side(entry, fixups, entry.mapped())
++    # Share decoded inputs within recursion and across explicit local-cache runs.
++    sides = {} if _sides is None else _sides
++    def side_for(image, parent=None):
++        identity = dict(sha256=hashlib.sha256(image.data).hexdigest(), header=image.at,
++                        fixup_header=parent.at if parent is not None else image.at)
++        key = tuple(identity.values())
++        if key not in sides:
++            build = lambda: Side(image, (parent or image).fixups(), image.mapped())
++            sides[key] = analysis_cache.load(identity, build) if analysis_cache else build()
++        return sides[key]
++    original = side_for(entry, cache)
++    fixups = original.fixups
+     print(f'original: {len(original.functions)} functions, {len(original.diversity)} diversities')
+     native_image = Image(native_data)
+-    native = Side(native_image, native_image.fixups(), native_image.mapped())
++    native = side_for(native_image)
+     print(f'native:   {len(native.functions)} functions, {len(native.diversity)} diversities')
+ 
+     matcher = Matcher(original, native)
+@@ -1019,9 +1029,9 @@ def match_images(raw, native_data, entry_name='com.apple.kernel', max_rounds=40,
+     print(f'reviewed anchors: {matcher.anchor_reviewed(inputs)}')
+     if reference_data is not None:
+         # Pure-leaf binds carry behaviour, not identity, so the naming reference must not use them.
+-        reference_pairing = match_images(raw, reference_data, entry_name, max_rounds, pure_leaves=False)
++        reference_pairing = match_images(raw, reference_data, entry_name, max_rounds, pure_leaves=False, analysis_cache=analysis_cache, _sides=sides)
+         reference_image = Image(reference_data)
+-        reference = Side(reference_image, reference_image.fixups(), reference_image.mapped())
++        reference = side_for(reference_image)
+         print(f'reference symbol anchors: {matcher.anchor_reference(reference, reference_pairing)}')
+         print(f'reference order anchors: {matcher.anchor_reference_order(reference, reference_pairing)}')
+     print(f'string anchors: {matcher.anchor_strings()}')
+diff --git a/fileset_shape.py b/fileset_shape.py
+index d9397b0..633a429 100644
+--- a/fileset_shape.py
++++ b/fileset_shape.py
+@@ -10,6 +10,11 @@ from kc_image import scan, signed
+ def checked_shape(code, pc):
+     words = list(struct.unpack('<' + 'I' * (len(code) // 4), code))
+     removed = set()
++    # BTI at a function entry is a landing-pad hint, not part of its callable
++    # computation. Keep interior BTI and refuse normalization if an internal
++    # branch targets the removed entry (checked below). Emitted code is unchanged.
++    if len(words) > 1 and words[0] in (0xd503245f, 0xd503249f, 0xd50324df):
++        removed.add(0)
+     for i in range(len(words)):
+         # mov x17,x16; xpac[di] x17; cmp x16,x17; b.eq +8;
+         # brk #0xc47[02]. Only accept the complete compiler sequence.
+diff --git a/fixtures/fileset-24A446-symbols.json b/fixtures/fileset-24A446-symbols.json
+index ad8d736..54cc0d9 100644
+--- a/fixtures/fileset-24A446-symbols.json
++++ b/fixtures/fileset-24A446-symbols.json
+@@ -1004,6 +1004,615 @@
+       "original_sha256": "63f7baef323892990578a57f6f1fa48d54de1f990c7b9d95c9036bbd3fa539c5",
+       "native_symbol": "_get_aiotask",
+       "evidence": "BTI; MRS TPIDR_EL1; LDR x0,[x8,#0x708]; RET. The RELEASE reference _get_aiotask has the same thread-relative accessor with its source-layout offset 0x6b8. Source bsd/kern/kern_aio.c returns current_uthread()->uu_aio_task; IOMediaBSDClient.cpp DKR_GET_TASK calls get_aiotask then falls back to current_task. Previous verified mapping and retained IOStorageFamily import agree on this identity. Resolve the native accessor by symbol; do not copy the original thread offset."
++    },
++    {
++      "original": "0xfffffe000ad4d090",
++      "original_size": 12,
++      "original_sha256": "7a6e19c0a1c733f7f867d31e962d8f3f2e21ef8a9e9e005fb467c251d1eb12fd",
++      "native_symbol": "_lck_mtx_gate_open",
++      "evidence": "osfmk/kern/locks.c: lck_mtx_gate_open discards the lock argument and forwards gate (x1) to gate_open. Original BTI; MOV x0,x1; B gate_open (0xfffffe000ad4bc80)."
++    },
++    {
++      "original": "0xfffffe000ad4d0ac",
++      "original_size": 12,
++      "original_sha256": "58da13a6911110ea740bff1c5aba0abdd70ee92c705568c03685d35cbacf8c18",
++      "native_symbol": "_lck_mtx_gate_steal",
++      "evidence": "osfmk/kern/locks.c: lck_mtx_gate_steal discards lock and forwards x1 to gate_steal at 0xfffffe000ad4c09c; exact three-instruction original wrapper."
++    },
++    {
++      "original": "0xfffffe000ad4d0b8",
++      "original_size": 712,
++      "original_sha256": "3ae75d41889305846c22ed54d0c01b053c99651d123751ce141ff4f9d26d3cba",
++      "native_symbol": "_lck_mtx_gate_wait",
++      "evidence": "osfmk/kern/locks.c: gate wait builds lock/unlock blocks selected by LCK_SLEEP flags (bits 0,3,5), embeds the mutex in both blocks and calls gate_wait. The original PAC block descriptors and flag branches implement this signature."
++    },
++    {
++      "original": "0xfffffe000aec5fe0",
++      "original_size": 72,
++      "original_sha256": "70c01cf568a210d3abd5353036159dfac4da5df7290c552ff007139d1bec104c",
++      "native_symbol": "_ml_stack_remaining",
++      "evidence": "osfmk/arm64/machine_routines.c: reads current CPU interrupt-stack top, tests local SP against its 16KiB interval, otherwise selects thread/kernel stack and returns local SP minus stack base. Native ml_stack_remaining implements the same interface using its own CPU/thread field offsets."
++    },
++    {
++      "original": "0xfffffe000aecf034",
++      "original_size": 24,
++      "original_sha256": "9c11b138bb41e70a82b56473a1b2c71fc4c9cf3dd87b1233ccc4df8312741cf1",
++      "native_symbol": "_clock_timebase_info",
++      "evidence": "osfmk/arm/rtclock.c: *info = rtclock_timebase_const. Original BTI; ADRP/ADD global base; LDR x8,[base,#8]; STR x8,[x0]; RET. Native clock_timebase_info has exactly this load/store body apart from BTI and the native global address."
++    },
++    {
++      "original": "0xfffffe000af255d0",
++      "original_size": 16,
++      "original_sha256": "28722c00e4307a8e059d852c60527aa0c47e75dd3ff81eb6d8b17391484879a9",
++      "native_symbol": "_vnode_ref",
++      "evidence": "bsd/vfs/vfs_subr.c: vnode_ref(vp) forwards vnode_ref_ext(vp,0,0). Original sets w1=w2=0 and tail-branches to 0xfffffe000af24a08, the paired vnode_ref_ext."
++    },
++    {
++      "original": "0xfffffe000b2638e4",
++      "original_size": 56,
++      "original_sha256": "6900c1420d89c7645dccf23a244b5e28d08d68d97c586be61e629493c50cd9ee",
++      "native_symbol": "_proc_isinitproc",
++      "evidence": "bsd/kern/kern_proc.c: loads authenticated initproc, returns false on NULL, else compares p==initproc. Original discriminator 0x706f and null/equality branches implement this precise predicate."
++    },
++    {
++      "original": "0xfffffe000b3d2e7c",
++      "original_size": 100,
++      "original_sha256": "4e6d735e5f2c18daff61dfa0264a8f9df1286f675800b9ecb4be9c13b2a2e8f4",
++      "native_symbol": "__ZN15OSMetaClassBase12safeMetaCastEPKS_PK11OSMetaClass",
++      "evidence": "libkern/c++/OSMetaClass.cpp: safeMetaCast returns NULL for null me, obtains its metaClass through virtual getMetaClass (slot 0x38, PAC 0xfffc), follows superClassLink (+0x10), and returns the original object only on a match. Original inlines metaCast."
++    },
++    {
++      "original": "0xfffffe000b3d385c",
++      "original_size": 536,
++      "original_sha256": "6d642716e1f0939592e93ae74103ff5dbb4171da0d90525b08e7b41eae0285af",
++      "native_symbol": "__ZN11OSMetaClassD2Ev",
++      "evidence": "libkern/c++/OSMetaClass.cpp: OSMetaClass destructor resets its vtable, removes className from sAllClassesDict under sAllClassesLock, releases className, and removes itself from stalled registration lists. Original mutex, dictionary PAC calls, and list traversal match these destructor operations."
++    },
++    {
++      "original": "0xfffffe000b3df580",
++      "original_size": 196,
++      "original_sha256": "b57980b2f74fb9cee1022f809e80b3542e546eec760e0e58606448f1181b6618",
++      "native_symbol": "__ZN12OSDictionary11withObjectsEPPK8OSObjectPPK8OSStringjj",
++      "evidence": "libkern/c++/OSDictionary.cpp: factory allocates OSDictionary, calls initWithObjects, releases on failure. Original dispatches init at vptr+0xe0 using PAC 0x01f1, which identifies the OSString-key overload; native OSString slot has the same discriminator (OSSymbol uses 0x161b at 0xd8)."
++    },
++    {
++      "original": "0xfffffe000b42b6fc",
++      "original_size": 328,
++      "original_sha256": "f7f8cedf393044826e10a7fc3b4494e202d01c867550dfbf986d0a43e6bb6a08",
++      "native_symbol": "_SHA1Init",
++      "evidence": "libkern/crypto/corecrypto_sha1.c: legacy SHA1Init allocates ccdigest context from g_crypto_funcs->ccsha1_di (+0x28), zeroes context, calls ccdigest_init_fn (PAC 0x73d8), and copies legacy state into SHA1_CTX. Original and native descriptor offset, dynamic size calculation, callback and copies agree; this is not SHA384_Init."
++    },
++    {
++      "original": "0xfffffe000b42b844",
++      "original_size": 512,
++      "original_sha256": "556246c8b621bca6f9287bdf9f1749976f71b14e9850dd8c95899f04268173fa",
++      "native_symbol": "_SHA1Update",
++      "evidence": "libkern/crypto/corecrypto_sha1.c: legacy SHA1Update takes ctx,data,len, obtains ccsha1_di at g_crypto_funcs+0x28, converts legacy state through a temporary digest context, calls the registered digest-update provider, and restores state. Original PAC type 0x12f7 agrees with the native SHA1Update/sha1_loop signature."
++    },
++    {
++      "original": "0xfffffe000b46c2d0",
++      "original_size": 16,
++      "original_sha256": "36c614153927e889ba546ff5d63d9e12d41556108c9ba5f965a537c849f64fef",
++      "native_symbol": "__ZN9IOServiceD2Ev",
++      "evidence": "iokit/Kernel/IOService.cpp: IOService destructor. Original function immediately after the IOService constructor poisons the vptr with -1 and returns; the native same-class D2 destructor forwards the base destructor using the current native class implementation."
++    },
++    {
++      "original": "0xfffffe000b4726c8",
++      "original_size": 12,
++      "original_sha256": "4d24d5f22e498d0549696c27cb003ccb83884ce8fee489833b32575bc436b838",
++      "native_symbol": "__ZN9IOService22waitForMatchingServiceEP12OSDictionaryy",
++      "evidence": "iokit/Kernel/IOService.cpp: waitForMatchingService(matching,timeout) forwards waitForMatchingServiceWithToken(matching,timeout,NULL). Original MOV x2,#0; B 0xfffffe000b462dd8, the paired WithToken implementation."
++    },
++    {
++      "original": "0xfffffe000b49c874",
++      "original_size": 304,
++      "original_sha256": "d3608e79a915edcde30a4f718fb5ca1442722e3dcfd47a27065cbe3b3d038a21",
++      "native_symbol": "__ZN10IOWorkLoop19workLoopWithOptionsEj",
++      "evidence": "iokit/Kernel/IOWorkLoop.cpp: static workLoopWithOptions saves numeric options, allocates a new 0x48-byte IOWorkLoop, optionally allocates reserved ExpansionData and stores options, then calls virtual init (PAC 0x4a6a), releasing on failure. This is the factory, not instance init."
++    },
++    {
++      "original": "0xfffffe000b49fe20",
++      "original_size": 172,
++      "original_sha256": "1c2645e9a327d638e25d51f38290104db415d20c0b30d520470c9c88d3e2f48c",
++      "native_symbol": "__ZN13IOCommandGate11commandGateEP8OSObjectPFiS1_PvS2_S2_S2_E",
++      "evidence": "iokit/Kernel/IOCommandGate.cpp: allocates IOCommandGate through its metaclass, calls init(owner,action) (slot 0xd8), returns object on success or releases it. Original saves owner/action and has this exact factory flow."
++    },
++    {
++      "original": "0xfffffe000b4a0580",
++      "original_size": 16,
++      "original_sha256": "36c614153927e889ba546ff5d63d9e12d41556108c9ba5f965a537c849f64fef",
++      "native_symbol": "__ZN9IOCommandD2Ev",
++      "evidence": "iokit/Kernel/IOCommand.cpp: same-class IOCommand D2 destructor. Original after IOCommand C1 stores -1 in vptr and returns; native D2 forwards OSObject D2."
++    },
++    {
++      "original": "0xfffffe000b4a154c",
++      "original_size": 156,
++      "original_sha256": "3455a61667e4b92e8374ef1b02d25c833e817eee90a17e11e792cd6cd1387ddb",
++      "native_symbol": "__ZN13IOCommandPool12withWorkLoopEP10IOWorkLoop",
++      "evidence": "iokit/Kernel/IOCommandPool.cpp: saves workLoop, allocates IOCommandPool, calls initWithWorkLoop (vptr+0x78), returns object or releases on failure. Original has this one-argument factory flow."
++    },
++    {
++      "original": "0xfffffe000b4a6a20",
++      "original_size": 200,
++      "original_sha256": "50b190d124de0ce316bd2aeee9268bb0b12b284744f8618237b3a6d6776b9d0f",
++      "native_symbol": "__ZN24IOBufferMemoryDescriptor11withOptionsEjmm",
++      "evidence": "iokit/Kernel/IOBufferMemoryDescriptor.cpp: allocates buffer descriptor and calls initWithPhysicalMask(kernel_task,options,capacity,alignment,0). Original saves three args and loads kernel_task before the virtual initializer."
++    },
++    {
++      "original": "0xfffffe000b4a6ae8",
++      "original_size": 212,
++      "original_sha256": "1dfd67f8e29ec6d96875212e53127bb8d1c223bf7345312a41fe1dd9449a13cf",
++      "native_symbol": "__ZN24IOBufferMemoryDescriptor12withCapacityEmjb",
++      "evidence": "iokit/Kernel/IOBufferMemoryDescriptor.cpp: withCapacity(capacity,direction,contiguous) inlines withOptions; contiguous selects flag 0x10 and alignment capacity versus 1. Original conditional flag and CSINC alignment exactly identify this overload."
++    },
++    {
++      "original": "0xfffffe000b4bb074",
++      "original_size": 208,
++      "original_sha256": "7a3f223c1b59a1577944c89898b5e5cee677a55bdbcced67abc9769360ddc504",
++      "native_symbol": "__ZN18IOMemoryDescriptor16withAddressRangeEyyjP4task",
++      "evidence": "iokit/Kernel/IOMemoryDescriptor.cpp: saves address/length as one address range, allocates IOGeneralMemoryDescriptor, selects virtual/physical type according to task, adds direction and reference flags, then calls initWithOptions with one range."
++    },
++    {
++      "original": "0xfffffe000b4bcafc",
++      "original_size": 56,
++      "original_sha256": "bcb800b9ff3b167d75cc60a9b98c1a3bca39595b83ea44dfea8af99374139e7b",
++      "native_symbol": "__ZN18IOMemoryDescriptor18getPhysicalAddressEv",
++      "evidence": "iokit/Kernel/IOMemoryDescriptor.cpp: compatibility accessor returns getPhysicalSegment(0,NULL,0). Original zeroes x1,x2,w3 and tail-dispatches vptr+0x98 with PAC 0x649a; native descriptor overrides use exactly this discriminator for getPhysicalSegment."
++    },
++    {
++      "original": "0xfffffe000b4e1940",
++      "original_size": 84,
++      "original_sha256": "e7a0ebbc768f5f6683093e8d9df7d31de5337af643ae975cab61d654b353a88b",
++      "native_symbol": "__ZN12IOUserClient24getTargetAndTrapForIndexEPP9IOServicej",
++      "evidence": "iokit/Kernel/IOUserClient.cpp: forwards index to getExternalTrapForIndex (vptr+0x5c0, PAC 0xea23), copies returned method object into *target if nonnull. The wrapper itself is signed with PAC 0x2bcb (11211), unique to this native method."
++    },
++    {
++      "original": "0xfffffe000b4e19a0",
++      "original_size": 84,
++      "original_sha256": "a60033ab4c55199af20ddeccdb119c9681df46ed2ecf4b70021c5450f7b79432",
++      "native_symbol": "__ZN12IOUserClient31getAsyncTargetAndMethodForIndexEPP9IOServicej",
++      "evidence": "iokit/Kernel/IOUserClient.cpp: calls getExternalAsyncMethodForIndex (slot 0x5a8, PAC 0xb50c), returns method and fills target from its first pointer. Own vtable PAC 0xbc5e (48222) identifies the pointer-output overload."
++    },
++    {
++      "original": "0xfffffe000b4e19f4",
++      "original_size": 84,
++      "original_sha256": "e16932a4832fb0831041cdccb338aae21313fa6da11aa85f0c85bc66c5d4769d",
++      "native_symbol": "__ZN12IOUserClient26getTargetAndMethodForIndexEPP9IOServicej",
++      "evidence": "iokit/Kernel/IOUserClient.cpp: calls getExternalMethodForIndex (slot 0x5a0, PAC 0x3565), fills *target from first method pointer if nonnull. Own PAC 0xbdaa (48554) identifies this overload."
++    },
++    {
++      "original": "0xfffffe000b4e1b10",
++      "original_size": 88,
++      "original_sha256": "b1c43321c37da309a7fd95520e0469fc3d1c36166af24189bccbc36ed92616e6",
++      "native_symbol": "__ZN12IOUserClient10clientDiedEv",
++      "evidence": "iokit/Kernel/IOUserClient.cpp: sharedInstance || OSCompareAndSwap8(0,1,&closed) invokes virtual clientClose (slot 0x560,PAC 0x18b8), otherwise returns kIOReturnNotReady (0xe00002d8). Original byte fields, CAS and error agree. Own PAC 0xea14 (59924)."
++    },
++    {
++      "original": "0xfffffe000b4e1b78",
++      "original_size": 284,
++      "original_sha256": "723f9da8b5db7ca2d4ca01971b7a317bd5bf88390f5eb7f6f0397525c3e1a928",
++      "native_symbol": "__ZN12IOUserClient12initWithTaskEP4taskPvj",
++      "evidence": "iokit/Kernel/IOUserClient.cpp: three-argument initWithTask ignores task/security/type, initializes superclass if property table absent then reserve(). Original inlines reserve and passes NULL to super::init; own vtable PAC 0x5cf5 (23797) distinguishes it from init()."
++    },
++    {
++      "original": "0xfffffe000b4e1c94",
++      "original_size": 128,
++      "original_sha256": "424cb4f5801755be9d52735b9a419d7e9cb824a0cd6568a2668c9078f88969a1",
++      "native_symbol": "__ZN12IOUserClient12initWithTaskEP4taskPvjP12OSDictionary",
++      "evidence": "iokit/Kernel/IOUserClient.cpp: four-argument initWithTask calls super::init(properties from x4), then virtual three-argument initWithTask (slot 0x558), ANDs both bool results. Own PAC 0xbde5 (48613)."
++    },
++    {
++      "original": "0xfffffe000b4e1d14",
++      "original_size": 52,
++      "original_sha256": "fd10113c92737a49b5d27ffb47b84720ffea5d6a06582df71e905fc2f35adc61",
++      "native_symbol": "__ZN12IOUserClient24registerNotificationPortEP8ipc_portjy",
++      "evidence": "iokit/Kernel/IOUserClient.cpp: 64-bit refCon overload forwards the deprecated 32-bit overload via slot 0x578, PAC 0xbcef; own PAC 0xa03f (41023). Original authenticated tail-call implements that forwarding signature."
++    },
++    {
++      "original": "0xfffffe000b4e4420",
++      "original_size": 280,
++      "original_sha256": "f73074cdd5451bd93ab8cdf09217863c47dad97d719b9f04612e32ddfd154ee2",
++      "native_symbol": "__ZN12IOUserClient4initEP12OSDictionary",
++      "evidence": "iokit/Kernel/IOUserClient.cpp: dictionary init checks getPropertyTable(), calls IOService::init(dictionary), and inlines reserve: ExpansionData at +0x88, terminate defer, statistics and two locks. Own vtable PAC 0x43aa (17322)."
++    },
++    {
++      "original": "0xfffffe000b4e4538",
++      "original_size": 228,
++      "original_sha256": "c186538388fbbb8cbbba3e940fcfaae39a669e7b30bf0269414d6e1795cdfb54",
++      "native_symbol": "__ZN12IOUserClient4freeEv",
++      "evidence": "iokit/Kernel/IOUserClient.cpp: releases filter object, walks per-client filter-policy nodes and frees ExpansionData at +0x88, destroys embedded locks, then forwards IOService::free. Original PAC free slot 0xedc5 and these field operations distinguish it from other free methods."
++    },
++    {
++      "original": "0xfffffe000b4e461c",
++      "original_size": 284,
++      "original_sha256": "d92dd2bdce977cb91bdedb4bc4c0d372d8c3cfb1e6d6b79ad5d156cf014df084",
++      "native_symbol": "__ZN12IOUserClient4initEv",
++      "evidence": "iokit/Kernel/IOUserClient.cpp: no-argument init checks property table, invokes super::init(NULL), then reserve(). Original own PAC 0x4a6a (19050); same IOUserClient ExpansionData/lock fields as the dictionary and task overloads."
++    },
++    {
++      "original": "0xfffffe000b4e6764",
++      "original_size": 16,
++      "original_sha256": "36c614153927e889ba546ff5d63d9e12d41556108c9ba5f965a537c849f64fef",
++      "native_symbol": "__ZN12IOUserClientD2Ev",
++      "evidence": "iokit/Kernel/IOUserClient.cpp: same-class D2 destructor, directly after IOUserClient constructor, original vptr poisoning and return. Native IOUserClient D2 forwards IOService D2."
++    },
++    {
++      "original": "0xfffffe000b5a3ba8",
++      "original_size": 16,
++      "original_sha256": "270e3f8691f72932d5b54c15ba75782fa0a900b4afe6ad4133552961da730434",
++      "native_symbol": "_kernel_image4_storage_data",
++      "evidence": "bsd/kern/code_signing/txm.c and darwin26-kpi.patch: original no-return wrapper calls 0xfffffe000b5a3bb8, whose unique panic is unsupported AppleImage4 interface at txm.c:1649, identifying the TXM image4 storage-data service. Native kernel_image4_storage_data routes the same size_t*-to-void* ABI to the non-TXM xnu_image4_storage_data implementation; do not bind a generic abort routine."
++    },
++    {
++      "original": "0xfffffe000b5ab7a0",
++      "original_size": 84,
++      "original_sha256": "8345a617274c609fda0d0f914d1c4056d106b5251f3152cb992449bc5004adca",
++      "native_symbol": "_memset_s",
++      "evidence": "libkern: memset_s(s,smax,c,n) returns EINVAL on null s, E2BIG on smax above signed max, EOVERFLOW if n>smax, clamps count to min(n,smax) and calls memset with c and clamped count; original UMIN, checks and error values 22/7/84 prove the interface."
++    },
++    {
++      "original": "0xfffffe000b5ac7d0",
++      "original_size": 168,
++      "original_sha256": "39b88939af73a485c4cbee95f92c93bcf1d2e97e27d3cca6704c52a25b76f9a1",
++      "native_symbol": "_memset",
++      "evidence": "osfmk/arm64 string assembly: masks c to 8 bits, multiplies by 0x0101010101010101, preserves original x0, fills 64-byte blocks, handles 8-byte and byte tails, and returns original destination. This is memset, not bzero (already paired at 0xfffffe000b5ac720)."
++    },
++    {
++      "original": "0xfffffe000b5be100",
++      "original_size": 28,
++      "original_sha256": "f6a953e199655f542547cf030ca97621e4b2ac584c359d5382a49cd97bb5dcc2",
++      "native_symbol": "_SecureDTGetProperty",
++      "evidence": "pexpert/gen/device_tree.c: SecureDTGetProperty(entry,name,value,size) appends global DT base and end-base to x4/x5 and forwards SecureDTGetPropertyInternal. Original seven-instruction BTI/global-load wrapper matches native exactly apart from addresses."
++    },
++    {
++      "original": "0xfffffe000b5be330",
++      "original_size": 664,
++      "original_sha256": "f98ab5352973120a4bb09cd1fc20e2321902bb63a85643d745118391db1d5baf",
++      "native_symbol": "_SecureDTLookupEntry",
++      "evidence": "pexpert/gen/device_tree.c: SecureDTLookupEntry validates entry in the global tree range, splits slash-delimited path into a 64-byte buffer, searches child name properties with SecureDTGetPropertyInternal and strcmp, and reports device-tree property overflows. Original unique strings and full path parser identify it."
++    },
++    {
++      "original": "0xfffffe000b3d2a1c",
++      "original_size": 16,
++      "original_sha256": "48d24d7a2fe7d66267a30e04e79c70c03754574e971b65661fad7e5acc290755",
++      "native_symbol": "__ZNK11OSMetaClass12getMetaClassEv",
++      "evidence": "libkern/c++/OSMetaClass.cpp: OSMetaClass::getMetaClass returns the static sOSMetaClass object. Original BTI; ADRP x0; ADD x0,#0x238; RET; own vtable PAC 0xfffc. Native same getter returns its static object by the identical ADRP/ADD/RET sequence, with native address 0xfffffff007d701f8."
++    },
++    {
++      "original": "0xfffffe000b49ff2c",
++      "original_size": 20,
++      "original_sha256": "f2df8787f9f6a2cec41366f5d210db44ea30248e78d8b50f95602b21fc699fe4",
++      "native_symbol": "__ZN9IOCommand4initEv",
++      "evidence": "iokit/Kernel/IOCommand.cpp: IOCommand::init initializes fCommandChain with queue_init and returns true after OSObject::init. Original inlines the base true return and sets both links to this+0x10; own init PAC 0x4a6a. Native same-class init calls base init then performs exactly ADD x8,this,#0x10; STP x8,x8,[this,#0x10]."
++    },
++    {
++      "original": "0xfffffe000b4c1538",
++      "original_size": 12,
++      "original_sha256": "61b6982b7463283ad077fde03fe3eca62f3922c4f4c17ddf345adc82cac9435b",
++      "native_symbol": "__ZN16IOPlatformExpert21numBatteriesSupportedEv",
++      "evidence": "IOPlatformExpert.cpp: numBatteriesSupported returns numBatteries, word at +0xb0. Original full body after BTI is byte-identical to the named native implementation; original vtable PAC has a unique named native target, discriminator 0xf046."
++    },
++    {
++      "original": "0xfffffe000b4c1544",
++      "original_size": 20,
++      "original_sha256": "028cb22d9509b36c2fc98a19de77fe072182f7cd09c68f645bb3db8a01289dec",
++      "native_symbol": "__ZN16IOPlatformExpert16hasPrivPMFeatureEm",
++      "evidence": "IOPlatformExpert.cpp: hasPrivPMFeature tests sign-extended privPMFeatures at +0xac against the input mask. Original full body after BTI is byte-identical to the named native implementation; original vtable PAC has a unique named native target, discriminator 0x9c35."
++    },
++    {
++      "original": "0xfffffe000b4c1558",
++      "original_size": 20,
++      "original_sha256": "0d5feac54bf06601e61ac924310881efd76a8a7650dce873ce2ddcfee2afbe9b",
++      "native_symbol": "__ZN16IOPlatformExpert12hasPMFeatureEm",
++      "evidence": "IOPlatformExpert.cpp: hasPMFeature tests sign-extended PMFeatures at +0xa8 against the input mask. Original full body after BTI is byte-identical to the named native implementation; original vtable PAC has a unique named native target, discriminator 0x1a72."
++    },
++    {
++      "original": "0xfffffe000b4c1c74",
++      "original_size": 12,
++      "original_sha256": "f1580c9e50484b63fbe819055db26037ca3206311f5bc89a7e39c5206a814cc5",
++      "native_symbol": "__ZN16IOPlatformExpert14getMachineTypeEv",
++      "evidence": "IOPlatformExpert.cpp: getMachineType loads _peMachineType at +0x98. Original full body after BTI is byte-identical to the named native implementation; original vtable PAC has a unique named native target, discriminator 0xe6d."
++    },
++    {
++      "original": "0xfffffe000b4c1c80",
++      "original_size": 12,
++      "original_sha256": "20208acbcb3107e3c43ca7ff4653970c2ea708690b5cbbecd499a92a1304eef1",
++      "native_symbol": "__ZN16IOPlatformExpert14getChipSetTypeEv",
++      "evidence": "IOPlatformExpert.cpp: getChipSetType loads _peChipSetType at +0x90. Original full body after BTI is byte-identical to the named native implementation; original vtable PAC has a unique named native target, discriminator 0x9e97."
++    },
++    {
++      "original": "0xfffffe000b4c1c8c",
++      "original_size": 12,
++      "original_sha256": "da7e370e67423a4cf1d966508772366c573f116fc6cf3a7279d8b3ed0fc72a60",
++      "native_symbol": "__ZN16IOPlatformExpert14getBootROMTypeEv",
++      "evidence": "IOPlatformExpert.cpp: getBootROMType loads _peBootROMType at +0x88. Original full body after BTI is byte-identical to the named native implementation; original vtable PAC has a unique named native target, discriminator 0x8fa7."
++    },
++    {
++      "original": "0xfffffe000b4c290c",
++      "original_size": 12,
++      "original_sha256": "c370eb8967d9b178625d8da50c32e066b2f9c4c2cf7b078d2230ce1c78de7b58",
++      "native_symbol": "__ZN16IOPlatformExpert14setMachineTypeEl",
++      "evidence": "IOPlatformExpert.cpp: setMachineType stores x1 to _peMachineType at +0x98. Original full body after BTI is byte-identical to the named native implementation; original vtable PAC has a unique named native target, discriminator 0x86b1."
++    },
++    {
++      "original": "0xfffffe000b4c2918",
++      "original_size": 12,
++      "original_sha256": "24f2407dda469d3121fc76c00e8c808615f44ae1058273d9dba6650ae78e9477",
++      "native_symbol": "__ZN16IOPlatformExpert14setChipSetTypeEl",
++      "evidence": "IOPlatformExpert.cpp: setChipSetType stores x1 to _peChipSetType at +0x90. Original full body after BTI is byte-identical to the named native implementation; original vtable PAC has a unique named native target, discriminator 0xee67."
++    },
++    {
++      "original": "0xfffffe000b4c2924",
++      "original_size": 12,
++      "original_sha256": "74ad53b16f0184671672e78fd9cce98ff2b7621434b468da324416322f29c506",
++      "native_symbol": "__ZN16IOPlatformExpert14setBootROMTypeEl",
++      "evidence": "IOPlatformExpert.cpp: setBootROMType stores x1 to _peBootROMType at +0x88. Original full body after BTI is byte-identical to the named native implementation; original vtable PAC has a unique named native target, discriminator 0xde80."
++    },
++    {
++      "original": "0xfffffe000b4c8624",
++      "original_size": 12,
++      "original_sha256": "ad3e8a99d11d381d70c1bf4f2bd52bc8c53ef10ed2406915b1deec6f429ff664",
++      "native_symbol": "__ZN5IOCPU16getMachProcessorEv",
++      "evidence": "IOCPU.cpp: getMachProcessor loads machProcessor at +0xa0. Original full body after BTI is byte-identical to the named native implementation; original vtable PAC has a unique named native target, discriminator 0x37ef."
++    },
++    {
++      "original": "0xfffffe000b4c8660",
++      "original_size": 12,
++      "original_sha256": "da7e370e67423a4cf1d966508772366c573f116fc6cf3a7279d8b3ed0fc72a60",
++      "native_symbol": "__ZN5IOCPU11getCPUGroupEv",
++      "evidence": "IOCPU.cpp: getCPUGroup loads _cpuGroup at +0x88. Original full body after BTI is byte-identical to the named native implementation; original vtable PAC has a unique named native target, discriminator 0x8ca3."
++    },
++    {
++      "original": "0xfffffe000b4c866c",
++      "original_size": 12,
++      "original_sha256": "6d902b6b8cdc8b441c23f230e1b075615363250848b7b40191efd530ee2d9846",
++      "native_symbol": "__ZN5IOCPU11getCPUStateEv",
++      "evidence": "IOCPU.cpp: getCPUState loads _cpuState word at +0x94. Original full body after BTI is byte-identical to the named native implementation; original vtable PAC has a unique named native target, discriminator 0xa525."
++    },
++    {
++      "original": "0xfffffe000b4c8678",
++      "original_size": 12,
++      "original_sha256": "4985f88a97bddc1fe1316d0217fc56077ffa99185f73a2fab6936ee2cc6c3d3f",
++      "native_symbol": "__ZN5IOCPU12getCPUNumberEv",
++      "evidence": "IOCPU.cpp: getCPUNumber loads _cpuNumber word at +0x90. Original full body after BTI is byte-identical to the named native implementation; original vtable PAC has a unique named native target, discriminator 0xa1ea."
++    },
++    {
++      "original": "0xfffffe000b4c86d0",
++      "original_size": 20,
++      "original_sha256": "a55a94ac5781e99091cb42cb47dc0ce911d01b12891240d823de08232a1d5141",
++      "native_symbol": "__ZN5IOCPU11setCPUStateEj",
++      "evidence": "IOCPU.cpp: setCPUState stores _cpuState at +0x94 only if unsigned argument <=3 (kIOCPUStateCount=4). Original full body after BTI is byte-identical to the named native implementation; original vtable PAC has a unique named native target, discriminator 0xf83b."
++    },
++    {
++      "original": "0xfffffe000b4997c0",
++      "original_size": 52,
++      "original_sha256": "547b3c4ea6660fc025bf095ccbf22327629e8023b8062fae469634f2ec6b86e4",
++      "native_symbol": "__ZN6IOPMGR13enableCPUCoreEjy",
++      "evidence": "IOPMGR.cpp: enableCPUCore(unsigned,uint64_t) ignores entry_pa and forwards the legacy one-argument method. Both original and native tail-dispatch vtable+0x548 with PAC 0xa829, preserving w1 cpu_id; native adds explicit authentication failure checks. original vtable PAC has a unique named native target, discriminator 0x2303."
++    },
++    {
++      "original": "0xfffffe000b4c8630",
++      "original_size": 48,
++      "original_sha256": "a8764bff4d9e4127d47cec20c1f7a4da34e3cf1d7434a4352bad6e8f3ca91b62",
++      "native_symbol": "__ZN5IOCPU15getCPUGroupSizeEv",
++      "evidence": "IOCPU.cpp: getCPUGroupSize returns _cpuGroup->getCount(). Both load group at this+0x88 and tail-dispatch group vtable+0x90 with PAC 0x29e8; native adds explicit authentication failure checks. original vtable PAC has a unique named native target, discriminator 0x20ac."
++    },
++    {
++      "original": "0xfffffe000b4c3ac4",
++      "original_size": 72,
++      "original_sha256": "b4612665d69708ccff1c5a76aae6063c7539312944ad8b79d5bb888ed3b5c82c",
++      "native_symbol": "__ZN18IODTPlatformExpert18writeNVRAMPropertyEP15IORegistryEntryPK8OSSymbolP6OSData",
++      "evidence": "IOPlatformExpert.cpp: IODTPlatformExpert::writeNVRAMProperty forwards entry/name/value to dtNVRAM at this+0xe0, dispatch slot 0x578 PAC 0xa3bc, or returns kIOReturnNotReady 0xe00002d8. Original and native implement the same guarded forwarding, native adds authentication checks. original vtable PAC has a unique named native target, discriminator 0x592a."
++    },
++    {
++      "original": "0xfffffe000b4c3b0c",
++      "original_size": 72,
++      "original_sha256": "00536444b9e55d2e97516038ac5358f9153433c13fdbc9d63f61bb92aaa7452c",
++      "native_symbol": "__ZN18IODTPlatformExpert17readNVRAMPropertyEP15IORegistryEntryPPK8OSSymbolPP6OSData",
++      "evidence": "IOPlatformExpert.cpp: IODTPlatformExpert::readNVRAMProperty forwards entry/name/value outputs to dtNVRAM at this+0xe0, dispatch slot 0x570 PAC 0xd4c7, or returns kIOReturnNotReady 0xe00002d8. Original and native implement the same guarded forwarding, native adds authentication checks. original vtable PAC has a unique named native target, discriminator 0x6141."
++    },
++    {
++      "original": "0xfffffe000b4c4518",
++      "original_size": 52,
++      "original_sha256": "2aa9fff290d234d1c1592ab1f42b482b578662730678ff75e1906f444b74ed71",
++      "native_symbol": "__ZN18IODTPlatformExpert14getProductNameEPci",
++      "evidence": "IOPlatformExpert.cpp: arm64 IODTPlatformExpert::getProductName forwards getMachineName. Original and named native dispatch this vtable+0x5b0 PAC 0x69ff preserving buffer/length. Reject the IOPlatformExpert base candidate, whose body merely returns false. Shared override PAC disambiguated by full forwarding body, discriminator 0xc0ab."
++    },
++    {
++      "original": "0xfffffe000b4c454c",
++      "original_size": 52,
++      "original_sha256": "9f064f3de39329f37da78c71f5b9517336e83b6601b385381d81f84cb76061d7",
++      "native_symbol": "__ZN18IODTPlatformExpert13getTargetNameEPci",
++      "evidence": "IOPlatformExpert.cpp: arm64 IODTPlatformExpert::getTargetName forwards getModelName. Original and named native dispatch this vtable+0x5a8 PAC 0xb584 preserving buffer/length. Reject the base false-return implementation. Shared override PAC disambiguated by full forwarding body, discriminator 0xc0fa."
++    },
++    {
++      "original": "0xfffffe000b4c4720",
++      "original_size": 84,
++      "original_sha256": "61d9448cff5a304966ecbeba8dff99c1c55472c9f041224bd1ae3102c1b7c264",
++      "native_symbol": "__ZN18IODTPlatformExpert13savePanicInfoEPhy",
++      "evidence": "IOPlatformExpert.cpp: IODTPlatformExpert::savePanicInfo loads dtNVRAM at +0xe0, invokes slot 0x598 PAC 0xb06d, returns result or zero if absent/zero. Both bodies match this flow; the base candidate is only a zero-return leaf. Shared override PAC disambiguated by full forwarding body, discriminator 0x7bf8."
++    },
++    {
++      "original": "0xfffffe000b4c4774",
++      "original_size": 84,
++      "original_sha256": "2a7315a1ce48bc389aab62047455c26944ba49af453f52f31860d58cf2ec6ebe",
++      "native_symbol": "__ZN18IODTPlatformExpert23registerNVRAMControllerEP17IONVRAMController",
++      "evidence": "IOPlatformExpert.cpp: IODTPlatformExpert::registerNVRAMController conditionally invokes dtNVRAM at +0xe0 slot 0x540 PAC 0x110c, then calls base waitForService for IONVRAM. Original and native both have the conditional forwarding plus IONVRAM string; the base alone lacks the forwarding. Shared override PAC disambiguated by full forwarding body, discriminator 0xe91a."
++    },
++    {
++      "original": "0xfffffe000b4c1774",
++      "original_size": 140,
++      "original_sha256": "6f60efbd40f3ce0f9d9a7170e7ee554f95a503f1512a6d408f94dc3c396e3299",
++      "native_symbol": "__ZN16IOPlatformExpert25getPhysicalRangeAllocatorEv",
++      "evidence": "IOPlatformExpert.cpp: getPhysicalRangeAllocator gets property Platform Memory Ranges through slot 0x118 PAC 0x37a5 and OSDynamicCasts to IORangeAllocator. Original uses this unique string then an inline getMetaClass/parent walk; native uses the same property dispatch then named OSMetaClassBase::safeMetaCast. original vtable PAC has a unique named native target, discriminator 0x72e1."
++    },
++    {
++      "original": "0xfffffe000b4c1800",
++      "original_size": 52,
++      "original_sha256": "392c95f5d1bfc12d57b6fbd680d3630e803ff30d70dcc69e9ea12f0be46fb53b",
++      "native_symbol": "__ZN16IOPlatformExpert16atInterruptLevelEv",
++      "evidence": "IOPlatformExpert.cpp: atInterruptLevel returns ml_at_interrupt_context. Original inlines DAIF interrupt-mask check and TPIDR_EL1 current CPU interrupt-state test; native calls named ml_at_interrupt_context and converts the result to bool. Own PAC 0xa6d3 selects this method. original vtable PAC has a unique named native target, discriminator 0xa6d3."
++    },
++    {
++      "original": "0xfffffe000b4c1bc0",
++      "original_size": 60,
++      "original_sha256": "6f24de2a7db4b4777b7b6aff34492000969ce39a332360c2b3ef2c6433bd83b1",
++      "native_symbol": "__ZN16IOPlatformExpert14getConsoleInfoEP8PE_Video",
++      "evidence": "IOPlatformExpert.cpp: getConsoleInfo forwards PE_current_console(consoleInfo). Original copies the 0x90-byte PE_Video console to x1 then returns zero; native moves x1 into x0 and tail-calls named PE_current_console. Own PAC 0x1cbd selects this method. original vtable PAC has a unique named native target, discriminator 0x1cbd."
++    },
++    {
++      "original": "0xfffffe000b4c480c",
++      "original_size": 192,
++      "original_sha256": "e0e0963c5b63d498aebcebeeca90d1bf27be547531256cceed4b99becb0aa7a3",
++      "native_symbol": "__ZN18IODTPlatformExpert14getMachineNameEPci",
++      "evidence": "IOPlatformExpert.cpp: IODTPlatformExpert::getMachineName gets provider (slot 0x370 PAC 0x93b7), model property (slot 0x108 PAC 0x82eb), OSData bytes (slot 0xd8 PAC 0xd240), copies with strlcpy(name,data,maxLength-1), returns property!=NULL. Both original and named native follow these operations; base candidate only returns false. Shared override PAC disambiguated by full forwarding body, discriminator 0x69ff."
++    },
++    {
++      "original": "0xfffffe000b4c1468",
++      "original_size": 184,
++      "original_sha256": "35bbd0b9366b2aaec01b056b60dcd1f99a482ec28e565433aa3ac70f35bde7c4",
++      "native_symbol": "__ZN16IOPlatformExpert29deregisterInterruptControllerEP8OSSymbol",
++      "evidence": "IOPlatformExpert.cpp: locks gIOInterruptControllersLock, removes name from gIOInterruptControllers (dictionary slot 0x108 PAC 0x9a44), unlocks and returns success. Original inlines uncontended mutex operations; native calls mutex helpers. Both perform this exact remove/unlock/zero-return flow."
++    },
++    {
++      "original": "0xfffffe000b4c195c",
++      "original_size": 328,
++      "original_sha256": "502ce218693ebb94d7ccda23ae752052bed9b7c5143dd9a8e75e670e393d025a",
++      "native_symbol": "__ZN16IOPlatformExpert25lookUpInterruptControllerEP8OSSymbol",
++      "evidence": "IOPlatformExpert.cpp: under the same global lock, loops dictionary getObject(name) at slot 0x128 PAC 0x5837, sleeps on dictionary until nonnull, unlocks, dynamically casts IOInterruptController. Original inlines mutex and metaclass parent walk; native calls lock/sleep/safeMetaCast helpers. Own PAC 0xe047 and the lookup/wait flow identify the method."
++    },
++    {
++      "original": "0xfffffe000b4c1834",
++      "original_size": 296,
++      "original_sha256": "6cceb5e9dd3cea4dd96a8f9e3c5bfcffee82d24783aef5992a62cd7f8f1d9a9c",
++      "native_symbol": "__ZN16IOPlatformExpert25setCPUInterruptPropertiesEP9IOService",
++      "evidence": "IOPlatformExpert.cpp: serviceMatching IOInterruptController, propertyMatching platform interrupt-controller key with kOSBooleanTrue, waits, casts controller and forwards the original IOService argument to slot 0x5b0 PAC 0xb7bb. Original and native share the matching calls, string, true value and terminal forwarding; reference source inlines/releases different helpers."
++    },
++    {
++      "original": "0xfffffe000b4c1cb8",
++      "original_size": 264,
++      "original_sha256": "654d0ff141d6cf4bdb5096d519ee61b202b8ffe8a11f9cfdd55e71bad5b4ed7f",
++      "native_symbol": "__ZN16IOPlatformExpert9createNubEP12OSDictionary",
++      "evidence": "IOPlatformExpert.cpp: dictionary createNub allocates 0x90-byte IOPlatformDevice (native typed new and IOService base constructor, original inline construction), invokes init(dictionary) at slot 0xa8 PAC 0x43aa, releases through slot 0x28 PAC 0x3a87 on failure, returns null or allocated nub. Own PAC 0x1fe7 distinguishes the dictionary overload."
++    },
++    {
++      "original": "0xfffffe000b4c3ea8",
++      "original_size": 280,
++      "original_sha256": "536e4d1912fe1ed34c5fe95c05c492eb9ae6b443a2139b7626f58f8248435365",
++      "native_symbol": "__ZN18IODTPlatformExpert9createNubEP15IORegistryEntry",
++      "evidence": "IOPlatformExpert.cpp: registry-entry createNub allocates IOPlatformDevice, invokes init(entry,gIODTPlane) at slot 0x250 PAC 0x550c, calls free at slot 0x70 PAC 0xedc5 on failure, returns null or nub. Both bodies share these distinct init/free operations, unlike the dictionary overload; own PAC 0x8145."
++    },
++    {
++      "original": "0xfffffe000b4c3fc0",
++      "original_size": 512,
++      "original_sha256": "50126e83858b0f752aa64da15739eff2e45b11c8f08b85b979d2d7a187ae1936",
++      "native_symbol": "__ZN18IODTPlatformExpert15processTopLevelEP15IORegistryEntry",
++      "evidence": "IOPlatformExpert.cpp: processes deleteList via IODTFindMatchingEntries, detaches children, publishes NVRAM, sets dtNVRAM at +0xe0 from global options entry, traverses cpus, creates CPU and top-level nubs via excludeList. Full original/native bodies both contain cpus, deleteList dispatch 0x688 PAC 0x3ccd, iterator loop, NVRAM assignment and final createNubs slot 0x6a0 PAC 0xe3a2. Native debug adds nonnull-options assertion."
++    },
++    {
++      "original": "0xfffffe000b4c4a08",
++      "original_size": 100,
++      "original_sha256": "3bebce9b41c008265283301ab430fb044eab11eae55926d779db7c041cccc945",
++      "native_symbol": "__ZN18IODTPlatformExpert15getNubResourcesEP9IOService",
++      "evidence": "IOPlatformExpert.cpp: IODTPlatformExpert override tests nub getDeviceMemory at slot 0x3d8 PAC 0xe213, invokes IODTResolveAddressing(nub,reg,NULL) only when absent, returns success. Both original and native implement the conditional resolver; base IOPlatformExpert candidate is only zero-return."
++    },
++    {
++      "original": "0xfffffe000b4c4ad4",
++      "original_size": 88,
++      "original_sha256": "c01e0f6f9ab83a585f0faa2f487830e6c16abf193ab1ece0686d457adb26daaa",
++      "native_symbol": "__ZN18IODTPlatformExpert9configureEP9IOService",
++      "evidence": "IOPlatformExpert.cpp: DT override invokes base IOPlatformExpert::configure(provider), then processTopLevel(provider) through slot 0x680 PAC 0xaaf0. Both original/native bodies have these calls; original RELEASE eliminates the base-result branch, native DEVELOPMENT retains failure handling. Base candidate is the large configuration walker, ArmDTPlatform override has different board-specific setup; neither is this wrapper."
++    },
++    {
++      "original": "0xfffffe000b4c2b88",
++      "original_size": 8,
++      "original_sha256": "6404aa813d54fcc893646eb3103ddb980e22eb5faf0db76161874067335877ff",
++      "native_symbol": "__ZN16IOPlatformExpert6attachEP9IOService",
++      "evidence": "IOPlatformExpert.cpp: IOPlatformExpert attach simply returns super IOService::attach(provider). Original BTI plus tail-branch targets already string-matched IOService::attach at 0xfffffe000b45b21c. Choose the platform forwarding override, not the large IOService implementation with its shared virtual PAC."
++    },
++    {
++      "original": "0xfffffe000b4db564",
++      "original_size": 176,
++      "original_sha256": "0abdb74caabf81a168316feab61bcd77229e92d75923fd347eaead68dc3a9370",
++      "native_symbol": "__ZN21IOInterruptController14causeInterruptEP9IOServicei",
++      "evidence": "IOInterruptController.cpp: source array at nub+0x80 uses 16-byte entries/vectorData+8; OSData bytes slot 0xd8 PAC 0xd240 provides signed vector index. Both use controller vectors+0x88 with 64-byte stride, dispatch causeVector slot 0x5a8 PAC 0x4435 and return success. Original adds checked-index bounds poisoning, native explicit PAC failure checks. The reviewed IOInterruptController table fixes the base implementation, excluding IOCPU/Passthru variants that call ml_cause_interrupt."
++    },
++    {
++      "original": "0xfffffe000b4db614",
++      "original_size": 204,
++      "original_sha256": "13a9e205840d174b05cd6ffc97d03d98f729fe70417b09717833815ceb53480a",
++      "native_symbol": "__ZN21IOInterruptController16disableInterruptEP9IOServicei",
++      "evidence": "IOInterruptController.cpp: after the same vector lookup, stores disabledSoft=1 at vector+1, DMB ISH, calls platform atInterruptLevel (slot 0x608 PAC 0xa6d3), waits on vector interruptActive+0 unless in interrupt context, returns success. Both complete bodies match; original inlines getPlatform, native uses its named helper. Reviewed class slot excludes shared/CPU controller variants."
++    },
++    {
++      "original": "0xfffffe000b4db7f8",
++      "original_size": 212,
++      "original_sha256": "c46803301a5a3435a5627b2ce13368c2f51faef4d95c4ffda4a71bb877ca34ba",
++      "native_symbol": "__ZN21IOInterruptController16getInterruptTypeEP9IOServiceiPi",
++      "evidence": "IOInterruptController.cpp: rejects NULL output with kIOReturnBadArgument 0xe00002c2; same source/vector lookup; dispatches getVectorType slot 0x590 PAC 0x978, writes 32-bit result to original x3, returns success. Original and native have this complete flow and belong to the same reviewed base-controller slot."
++    },
++    {
++      "original": "0xfffffe000b4db8cc",
++      "original_size": 392,
++      "original_sha256": "ad8fdea25ef39ae2c3994b5c1a2ff4deb6510542b51ffd73c7ca604b15acf49b",
++      "native_symbol": "__ZN21IOInterruptController19unregisterInterruptEP9IOServicei",
++      "evidence": "IOInterruptController.cpp: obtains vector from nub source, locks vector+8, returns success if registered flag+3 is clear; otherwise dispatches disableInterrupt (0x560 PAC 0x74c0), disableVectorHard (0x598 PAC 0x4d4e), clears active/soft/hard/registered and nub/source/handler/target/refCon, unlocks and returns success. All field offsets and virtual calls agree; original inlines uncontended mutex operations, native calls lock helpers. Distinct from shared-controller unregister."
++    },
++    {
++      "original": "0xfffffe000b4c47c8",
++      "original_size": 68,
++      "original_sha256": "72d5e8722e3ee136f83867f07318900d4262d83d0db86f44b15f64a0c2b4101b",
++      "native_symbol": "__ZN18IODTPlatformExpert11haltRestartEj",
++      "evidence": "IOPlatformExpert.cpp: DT haltRestart forwards the base routine; both compile to the same branch structure: type 5 returns zero, type 2 hangs, type 3 is normalized to zero for PE_halt_restart callback (PAC 0xba5), absent callback returns -1. Class-slot evidence chooses the DT override although base body implements the same behavior."
++    },
++    {
++      "original": "0xfffffe000b4c4b2c",
++      "original_size": 148,
++      "original_sha256": "1a1bd121fcabd6346d4b011772601a24b88e2017322332161995dc7cf5b5f516",
++      "native_symbol": "__ZN18IODTPlatformExpert5probeEP9IOServicePi",
++      "evidence": "IOPlatformExpert.cpp: DT probe returns this only when provider compareNames(getProperty(gIONameMatchKey)) succeeds, otherwise NULL. Both use getProperty slot 0x108 PAC 0x82eb and compareNames slot 0x1f8 PAC 0xcbcc; original inlines the base probe identity return, native calls the named base. Reviewed DT table chooses this override instead of bare IOService, test classes or ArmCpu."
++    },
++    {
++      "original": "0xfffffe000b5300e4",
++      "original_size": 96,
++      "original_sha256": "9226e5d5c0c3e7a718516670c33bcce3cf0120f0921f8bff590048938a2630f6",
++      "native_symbol": "__ZN17IONVRAMController15registerServiceEj",
++      "evidence": "iokit/Families/IONVRAM/IONVRAMController.cpp: calls superclass registerService(options), then getPlatform()->registerNVRAMController(this). Original direct super call and inlined getPlatform correspond to native authenticated superclass slot and named getPlatform helper; both terminal calls use slot 0x5e8 PAC 0xe91a and pass the controller as x1. Reviewed IONVRAMController slot establishes the override."
++    },
++    {
++      "original": "0xfffffe000b4c1c10",
++      "original_size": 8,
++      "original_sha256": "a76a2a11e468efac6c45f962f48f344897af1a23fe2610bfd5e15a11a14f26de",
++      "native_symbol": "__ZN16IOPlatformExpert11sleepKernelEv",
++      "evidence": "IOPlatformExpert.cpp: sleepKernel is a void(void receiver) wrapper calling IOCPUSleepKernel. Original complete body is BTI plus a single tail-branch, native is one tail-branch to named IOCPUSleepKernel. Same-class reviewed table slot and unique own PAC establish this forwarding interface; no guessed substitution for the sleep implementation."
++    },
++    {
++      "original": "0xfffffe000ad69744",
++      "original_size": 16,
++      "original_sha256": "3fe2a0f96709e8269f551bca107efec1241d91fc047df3785aa28e27675d15e8",
++      "native_symbol": "_thread_block",
++      "evidence": "osfmk/kern/sched_prim.c: thread_block(continuation) forwards thread_block_reason(continuation,NULL,AST_NONE). Complete original wrapper is BTI; MOV x1,0; MOV w2,0; B 0xfffffe000ad65618. The callee is the mapped thread_block_reason whose full body saves reason, disables interrupts and schedules current TPIDR_EL1 thread. Native named wrapper implements the same argument forwarding, unlike thread_block_parameter which preserves x1."
++    },
++    {
++      "original": "0xfffffe000b44db44",
++      "original_size": 296,
++      "original_sha256": "46c33a7a165197fe8ae812a306a0fbad6b3bb6e6978bb0dde05dfce46b347c32",
++      "native_symbol": "__ZNK15IORegistryEntry12copyPropertyEPKc",
++      "evidence": "IORegistryEntry.cpp wrap2(const char,const): recursive PLOCK, virtual getProperty(char*) at 0x118 PAC 0x37a5, retain nonnull result via 0x20 PAC 0x2e4a, PUNLOCK, return object. Original inlines recursion owner/count/mutex and native calls lock helpers; source ownership and full body establish base copyProperty, not the previously inferred IORootParent override."
++    },
++    {
++      "original": "0xfffffe000b45e094",
++      "original_size": 212,
++      "original_sha256": "ede4f3a1288222abceaf0105789996245cc579be5b4e6e221f0461df37da73c1",
++      "native_symbol": "__ZN9IOService5startEPS_",
++      "evidence": "IOService start enforces a MAC permission check on current credential and this, logs FAILED MAC check in ::start() on denial, returns error==0. Original 0xfffffe000b57c454 iterates MAC policies at offset 0x1e8 with callback PAC 0xe4fe. OS-owned native-iokit-start-check.patch reconstructs this observed slot ABI and native machine qualification proves start calls the compiled MAC wrapper, same slot and discriminator. Do not map to the old unconditional-success base or IORootParent override."
++    },
++    {
++      "original": "0xfffffe000b57c454",
++      "original_size": 520,
++      "original_sha256": "77e71fa269c99c1a438dde0a569e00583e6491e083c6747d9806bd9b7d92d202",
++      "native_symbol": "_mac_iokit_check_service_start",
++      "evidence": "Observed 24A446 IOKit service-start policy wrapper: int(kauth_cred_t,io_object_t), policy ops offset 0x1e8, function type discriminator 0xe4fe, normal MAC error aggregation and static/dynamic policy iteration. Native locally named wrapper uses standard MAC_CHECK with a typed field replacing reserved22 at the same offset; compiled slot and discriminator verified. The function name is local to this port, reconstructed from the observed ABI rather than claimed as an original symbol."
+     }
+   ],
+   "data": [
+@@ -1162,13 +1771,108 @@
+       "native_symbol": "_audio_active",
+       "addend": 0,
+       "evidence": "32-bit global load at 0xfffffe000ad7c580 in PROC_CROSSED_HIGH_WATERMARK__SEND_EXC_RESOURCE_AND_SUSPEND, guarded by disable_exc_resource_during_audio and followed by the task_jetsam_realtime_audio bit test. Matches osfmk/kern/task.c resource-exception suppression. The selected sandbox pointer and retained image also identify _audio_active."
++    },
++    {
++      "original": "0xfffffe0007f082b0",
++      "native_symbol": "_kOSBooleanTrue",
++      "evidence": "libkern/c++/OSBoolean.cpp: kOSBooleanTrue is a const pointer to the static gOSBooleanTrue singleton. Original pointer at 0xfffffe0007f082b0 targets 0xfffffe000b9ce278, referenced by OSBoolean::initialize and withBoolean; native kOSBooleanTrue has a fixup to named gOSBooleanTrue. Bind the pointer variable itself, not the singleton object or a fabricated GOT slot."
++    },
++    {
++      "original": "0xfffffe0007f02a80",
++      "native_symbol": "__ZN9IODTNVRAM9metaClassE",
++      "evidence": "OSMetaClass.h: IODTNVRAM::metaClass is a const pointer to its gMetaClass; getMetaClass returns &gMetaClass. Original pointer fixup 0xfffffe0007f02a80 targets 0xfffffe000b92a028, the same object returned by the complete 16-byte getter 0xfffffe000b4d86f8 and referenced by an initializer containing the exact class name IODTNVRAM. Native __ZN9IODTNVRAM9metaClassE has an unauthenticated fixup directly to named __ZN9IODTNVRAM10gMetaClassE. Bind the constant pointer variable, not the object and not another GOT level."
++    },
++    {
++      "original": "0xfffffe0007f07450",
++      "native_symbol": "__ZN9OSBoolean9metaClassE",
++      "evidence": "OSMetaClass.h: OSBoolean::metaClass is a const pointer to its gMetaClass; getMetaClass returns &gMetaClass. Original pointer fixup 0xfffffe0007f07450 targets 0xfffffe000b928858, the same object returned by the complete 16-byte getter 0xfffffe000b3d86e4 and referenced by an initializer containing the exact class name OSBoolean. Native __ZN9OSBoolean9metaClassE has an unauthenticated fixup directly to named __ZN9OSBoolean10gMetaClassE. Bind the constant pointer variable, not the object and not another GOT level."
++    },
++    {
++      "original": "0xfffffe0007f07490",
++      "native_symbol": "__ZN8OSSymbol9metaClassE",
++      "evidence": "OSMetaClass.h: OSSymbol::metaClass is a const pointer to its gMetaClass; getMetaClass returns &gMetaClass. Original pointer fixup 0xfffffe0007f07490 targets 0xfffffe000b928b18, the same object returned by the complete 16-byte getter 0xfffffe000b41108c and referenced by an initializer containing the exact class name OSSymbol. Native __ZN8OSSymbol9metaClassE has an unauthenticated fixup directly to named __ZN8OSSymbol10gMetaClassE. Bind the constant pointer variable, not the object and not another GOT level."
++    },
++    {
++      "original": "0xfffffe0007f07698",
++      "native_symbol": "__ZN24IOBufferMemoryDescriptor9metaClassE",
++      "evidence": "OSMetaClass.h: IOBufferMemoryDescriptor::metaClass is a const pointer to its gMetaClass; getMetaClass returns &gMetaClass. Original pointer fixup 0xfffffe0007f07698 targets 0xfffffe000b92b238, the same object returned by the complete 16-byte getter 0xfffffe000b4a5b3c and referenced by an initializer containing the exact class name IOBufferMemoryDescriptor. Native __ZN24IOBufferMemoryDescriptor9metaClassE has an unauthenticated fixup directly to named __ZN24IOBufferMemoryDescriptor10gMetaClassE. Bind the constant pointer variable, not the object and not another GOT level."
++    },
++    {
++      "original": "0xfffffe0007f06128",
++      "native_symbol": "__ZN14IOPMrootDomain9metaClassE",
++      "evidence": "OSMetaClass.h: IOPMrootDomain::metaClass is a const pointer to its gMetaClass; getMetaClass returns &gMetaClass. Original pointer fixup 0xfffffe0007f06128 targets 0xfffffe000b92b4b0, the same object returned by the complete 16-byte getter 0xfffffe000b546a2c and referenced by an initializer containing the exact class name IOPMrootDomain. Native __ZN14IOPMrootDomain9metaClassE has an unauthenticated fixup directly to named __ZN14IOPMrootDomain10gMetaClassE. Bind the constant pointer variable, not the object and not another GOT level."
++    },
++    {
++      "original": "0xfffffe000b929ed0",
++      "native_symbol": "__ZN18IODTPlatformExpert10gMetaClassE",
++      "evidence": "OSMetaClass.h: IODTPlatformExpert::getMetaClass returns &gMetaClass. Original getter 0xfffffe000b4c4bc0 returns the direct object 0xfffffe000b929ed0. Initializer 0xfffffe000b4c61e4 passes that address and the exact class-name string to OSMetaClass constructor. For the IODTPlatformExpert case, instructions 0xfffffe000b4c6238..0xfffffe000b4c6250 pair x0=this object with x1=IODTPlatformExpert (class size 0xf0), distinct from the preceding IOPlatformExpert object. Native binding is named __ZN18IODTPlatformExpert10gMetaClassE, the object itself, not its metaClass pointer constant."
++    },
++    {
++      "original": "0xfffffe000b92b2a0",
++      "native_symbol": "__ZN17IONVRAMController10gMetaClassE",
++      "evidence": "OSMetaClass.h: IONVRAMController::getMetaClass returns &gMetaClass. Original getter 0xfffffe000b530144 returns the direct object 0xfffffe000b92b2a0. Initializer 0xfffffe000b53058c passes that address and the exact class-name string to OSMetaClass constructor. For the IODTPlatformExpert case, instructions 0xfffffe000b4c6238..0xfffffe000b4c6250 pair x0=this object with x1=IODTPlatformExpert (class size 0xf0), distinct from the preceding IOPlatformExpert object. Native binding is named __ZN17IONVRAMController10gMetaClassE, the object itself, not its metaClass pointer constant."
++    },
++    {
++      "original": "0xfffffe0007ece498",
++      "native_symbol": "__ZTV18IODTPlatformExpert",
++      "evidence": "OSMetaClass.h and class implementation: IODTPlatformExpert vtable base, whose vptr address point is base+16. Original getMetaClass at vptr+0x38 (symbol base+0x48) is 0xfffffe000b4c4bc0 and returns 0xfffffe000b929ed0; initializer 0xfffffe000b4c61e4 references that same object and exact class-name string IODTPlatformExpert. Native slot is named ['__ZNK18IODTPlatformExpert12getMetaClassEv']. All 215 method slots have identical authentication/key/diversity/address-diversity fields in order, and both 16-byte table headers agree. Bind full vtable symbol __ZTV18IODTPlatformExpert at addend zero, preserving its address point offset."
++    },
++    {
++      "original": "0xfffffe0007ecff08",
++      "native_symbol": "__ZTV12IOPlatformIO",
++      "evidence": "OSMetaClass.h and class implementation: IOPlatformIO vtable base, whose vptr address point is base+16. Original getMetaClass at vptr+0x38 (symbol base+0x48) is 0xfffffe000b4c806c and returns 0xfffffe000b929f88; initializer 0xfffffe000b4c84b4 references that same object and exact class-name string IOPlatformIO. Native slot is named ['__ZNK12IOPlatformIO12getMetaClassEv']. All 169 method slots have identical authentication/key/diversity/address-diversity fields in order, and both 16-byte table headers agree. Bind full vtable symbol __ZTV12IOPlatformIO at addend zero, preserving its address point offset."
++    },
++    {
++      "original": "0xfffffe0007ed4ba8",
++      "native_symbol": "__ZTV21IOInterruptController",
++      "evidence": "OSMetaClass.h and class implementation: IOInterruptController vtable base, whose vptr address point is base+16. Original getMetaClass at vptr+0x38 (symbol base+0x48) is 0xfffffe000b4dce70 and returns 0xfffffe000b92a170; initializer 0xfffffe000b4dd800 references that same object and exact class-name string IOInterruptController. Native slot is named ['__ZNK21IOInterruptController12getMetaClassEv']. All 185 method slots have identical authentication/key/diversity/address-diversity fields in order, and both 16-byte table headers agree. Bind full vtable symbol __ZTV21IOInterruptController at addend zero, preserving its address point offset."
++    },
++    {
++      "original": "0xfffffe0007f03118",
++      "native_symbol": "__ZTV16IOUserClient2022",
++      "evidence": "OSMetaClass.h and class implementation: IOUserClient2022 vtable base, whose vptr address point is base+16. Original getMetaClass at vptr+0x38 (symbol base+0x48) is 0xfffffe000b4e4bf4 and returns 0xfffffe000b92b048; initializer 0xfffffe000b4e503c references that same object and exact class-name string IOUserClient2022. Native slot is named ['__ZNK16IOUserClient202212getMetaClassEv']. All 187 method slots have identical authentication/key/diversity/address-diversity fields in order, and both 16-byte table headers agree. Bind full vtable symbol __ZTV16IOUserClient2022 at addend zero, preserving its address point offset."
++    },
++    {
++      "original": "0xfffffe0007f056e0",
++      "native_symbol": "__ZTV17IONVRAMController",
++      "evidence": "OSMetaClass.h and class implementation: IONVRAMController vtable base, whose vptr address point is base+16. Original getMetaClass at vptr+0x38 (symbol base+0x48) is 0xfffffe000b530144 and returns 0xfffffe000b92b2a0; initializer 0xfffffe000b53058c references that same object and exact class-name string IONVRAMController. Native slot is named ['__ZNK17IONVRAMController12getMetaClassEv']. All 173 method slots have identical authentication/key/diversity/address-diversity fields in order, and both 16-byte table headers agree. Bind full vtable symbol __ZTV17IONVRAMController at addend zero, preserving its address point offset."
++    },
++    {
++      "original": "0xfffffe0007f077c8",
++      "native_symbol": "__ZTV8OSObject",
++      "evidence": "OSMetaClass.h and class implementation: OSObject vtable base, whose vptr address point is base+16. Original getMetaClass at vptr+0x38 (symbol base+0x48) is 0xfffffe000b3d5b3c and returns 0xfffffe000b92b438; initializer 0xfffffe000b3d61fc references that same object and exact class-name string OSObject. Native slot is named ['__ZNK8OSObject12getMetaClassEv']. All 15 method slots have identical authentication/key/diversity/address-diversity fields in order, and both 16-byte table headers agree. Bind full vtable symbol __ZTV8OSObject at addend zero, preserving its address point offset."
++    },
++    {
++      "original": "0xfffffe0007ec5c88",
++      "native_symbol": "__ZTV15OSMetaClassBase",
++      "evidence": "OSMetaClassBase abstract vtable: all 13 slots exactly match native authentication/key/diversity/address-diversity layout; this layout has one native vtable address across the entire symbol table. The pure virtual slots, concrete isEqualTo/Dispatch slots and destructor pair match the abstract source interface. Original 36-byte constructor at 0xfffffe000b3d3024 only installs signed vptr (symbol base+16) and returns. Both 16-byte headers agree; this is not the 14-slot OSMetaClass vtable."
++    },
++    {
++      "original": "0xfffffe000b92ab08",
++      "native_symbol": "_gIOPublishNotification",
++      "evidence": "IOService.cpp initialize: _gIOPublishNotification = OSSymbol::withCStringNoCopy(IOServicePublish). Original literal 0xfffffe00070c135e is exactly 'IOServicePublish', passed in x0 to call 0xfffffe000b412984 then x0 is stored to 0xfffffe000b92ab08 at 0xfffffe000b46d840. Native named initialize contains the same exact string and references named global _gIOPublishNotification. This is storage for the notification-key pointer, not the OSSymbol object or a constant pointer-to-storage."
++    },
++    {
++      "original": "0xfffffe000b92ab18",
++      "native_symbol": "_gIOFirstMatchNotification",
++      "evidence": "IOService.cpp initialize: _gIOFirstMatchNotification = OSSymbol::withCStringNoCopy(IOServiceFirstMatch). Original literal 0xfffffe00070c1396 is exactly 'IOServiceFirstMatch', passed in x0 to call 0xfffffe000b412984 then x0 is stored to 0xfffffe000b92ab18 at 0xfffffe000b46d87c. Native named initialize contains the same exact string and references named global _gIOFirstMatchNotification. This is storage for the notification-key pointer, not the OSSymbol object or a constant pointer-to-storage."
++    },
++    {
++      "original": "0xfffffe000b92ba60",
++      "native_symbol": "__NSConcreteStackBlock",
++      "evidence": "libkern/libclosure/libclosuredata.c defines void * _NSConcreteStackBlock[32]; Block_private.h Block_layout is isa,flags,reserved,invoke,descriptor,captures. Independent original functions 0xfffffe000b55ff88 and 0xfffffe000b2261e0 both sign address 0xfffffe000b92ba60 with field-address blended data discriminator 0x6ae1 into stack-block isa, then install invoke at +0x10, descriptor +0x18 (original descriptor discriminator 0xc0bb) and captures +0x20. Native named proc_limitsetcur_fsize constructs the same stack block and signs named __NSConcreteStackBlock with the same isa discriminator 0x6ae1. Bind the global 32-pointer array object itself, not a pointer variable."
++    },
++    {
++      "original": "0xfffffe0007f06ef0",
++      "native_symbol": "__ZTV9IOService",
++      "evidence": "IOService vtable, not IORootParent: original getMetaClass slot at symbol+0x48 returns metadata object 0xfffffe000b92b4d8; exact OSMetaClass constructor x0/object and x1/class-name pairing identifies IOService. Parent metadata references in RootParent initializers do not establish class identity. All 168 native IOService slots have the same authentication/key/diversity/address-diversity layout; native getter is named IOService::getMetaClass. Native IOService::start now enforces the observed MAC check through native-iokit-start-check.patch. Bind symbol base with addend zero, address point remains +16."
+     }
+   ],
+   "sites": [
+     {
+       "site": "0xfffffe0008136458",
+       "native_symbol": "_unixnu_kernel_stack_shift",
+-      "evidence": "AppleMobileFileIntegrity's GOT slot for PAGE_SHIFT_CONST. Its only reader is the CoreEntitlements DER iterator's stack check (sp & ((1 << *slot) - 1) < 0x80 returns error 2), which assumes the stack base is aligned to 1 << shift, as on 16 KiB-page Apple kernels where the two lower guard pages are 32 KiB. On the native 4 KiB kernel the stack starts 8 KiB into a 32 KiB-aligned allocation, so the page shift (and 14) give false out-of-stack errors at fixed call depths (OSEntitlements copyDictionary failed with 14 on the exec path). Bound to unixnu_kernel_stack_shift, the allocation alignment shift (15), for which sp & mask stays at least 8 KiB inside any stack. The other ~70 components keep PAGE_SHIFT_CONST for page arithmetic."
++      "evidence": "AMFI GOT site for the CoreEntitlements DER stack-budget check (SP & ((1 << shift)-1)) < 0x80. The ipados-27 native-amfi-stack-granule patch preserves live stack size and three guard pages, requests alignment ceil_pow2(live_size+3*PAGE_SIZE), and exports its log2 from stack_init. vm_map_store guard-before alignment and the two lower guards place live SP at least one PAGE_SIZE into that granule, without crossing its upper boundary. Default 4KiB-page/16KiB stack uses shift 15, derived rather than hardcoded; kernel_stack_pages overrides derive another matching alignment and shift. This binding is AMFI-only; other consumers retain PAGE_SHIFT_CONST."
+     }
+   ],
+   "prelink-recovery-2026-11-02": {
+diff --git a/test_fileset_emit.py b/test_fileset_emit.py
+index d3ffe3e..f596738 100644
+--- a/test_fileset_emit.py
++++ b/test_fileset_emit.py
+@@ -9,7 +9,7 @@ import unittest
+ 
+ from fileset_emit import (Emit, dependency_closure, prelink_info, rebase_collection,
+                           validate_map, write_candidate, chain_word, decode, MH_DYLIB_IN_CACHE,
+-                          inline_data_ranges, emit_images)
++                          inline_data_ranges, emit_images, reviewed_sites)
+ from kc_image import Image, signed
+ 
+ 
+@@ -49,6 +49,21 @@ def collection_fixture():
+ 
+ 
+ class FilesetEmitTests(unittest.TestCase):
++    def test_reviewed_site_only_requires_symbols_in_selected_components(self):
++        from types import SimpleNamespace
++        record = json.loads((Path(__file__).parent / 'fixtures/fileset-24A446-symbols.json').read_text())
++        native = SimpleNamespace(symbols=lambda: {})
++        site = int(record['sites'][0]['site'], 16)
++        slide = -0x1000000
++        self.assertEqual(reviewed_sites(record['inputs'], native, slide, []), {})
++        for ranges in (None, [(site + slide, site + slide + 8)]):
++            with self.assertRaisesRegex(ValueError, 'missing native symbol'):
++                reviewed_sites(record['inputs'], native, slide, ranges)
++        native = SimpleNamespace(symbols=lambda: {0x123400: [record['sites'][0]['native_symbol']]})
++        self.assertEqual(reviewed_sites(record['inputs'], native, slide,
++                                       [(site + slide, site + slide + 8)]),
++                         {site + slide: 0x123400})
++
+     def test_inline_data_requires_entire_identity_and_code_boundaries(self):
+         pool = bytes.fromhex('0000807f0000f042') + bytes(24)
+         spec = [(pool[:8].hex(), len(pool), hashlib.sha256(pool).hexdigest())]
+diff --git a/test_fileset_shape.py b/test_fileset_shape.py
+index 8e8b499..b93332f 100644
+--- a/test_fileset_shape.py
++++ b/test_fileset_shape.py
+@@ -19,6 +19,28 @@ class CheckedShapeTests(unittest.TestCase):
+         self.assertEqual(b[1][28],8)
+         self.assertEqual(b[1][32],12)
+ 
++    def test_entry_bti_variants_preserve_body_and_site_offsets(self):
++        body = [0xb940b000, 0xd65f03c0]  # ldr w0,[x0,#0xb0]; ret
++        for bti in (0xd503245f, 0xd503249f, 0xd50324df):
++            normalized = shape([bti, *body])
++            self.assertEqual(normalized[0], shape(body)[0])
++            self.assertEqual(normalized[1], {4: 0, 8: 4})
++
++    def test_entry_bti_preserves_internal_branch_geometry(self):
++        body = [0xb4000040, 0x52800020, 0xd65f03c0]
++        with_bti = [0xd503245f, *body]
++        self.assertEqual(shape(body)[0], shape(with_bti)[0])
++
++    def test_interior_bti_and_single_word_are_kept(self):
++        for words in ([0xd503201f,0xd503245f,0xd65f03c0], [0xd503245f]):
++            self.assertEqual(len(shape(words)[0]), len(words))
++
++    def test_backedge_to_entry_bti_disables_normalization(self):
++        words = [0xd503245f, 0x52800020, 0x17fffffe]
++        normalized = shape(words)
++        self.assertEqual(len(normalized[0]), len(words))
++        self.assertEqual(normalized[1], {0:0,4:4,8:8})
++
+     def test_partial_or_unrelated_check_is_kept(self):
+         check = [0xaa1003f1,0xdac147f1,0xeb11021f,0x54000040,0xd4388e40]
+         self.assertEqual(len(shape([0xd503201f,*check,0xd65f03c0])[0]),7)

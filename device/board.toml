@@ -1,0 +1,77 @@
+schema_version = 2
+
+# UniXNU device repository: Lenovo Xiaoxin Pad Pro 12.7 (2025) / TB375FC / Android product "yili".
+# Hardware values below come from the live device inventory (root adb) and the stock
+# TB375FC_ZUX_1.1.04.016 package; see ../findings.md for the evidence table.
+
+[board]
+name = "tb375fc"
+soc = "MT6897"
+soc_source = "mt6897"
+os_profile = "ipados-17.7.11-21H461"
+description = "Lenovo Xiaoxin Pad Pro 12.7 (2025), TB375FC / yili, MediaTek MT6897 (Dimensity 8300)"
+kit = "tb375fc"
+# example stays true until the UEFI menu is confirmed on hardware and the payload inputs
+# (APFS Data volume UUID, unique chip ID) are measured. build/bootimg refuse example repos.
+example = true
+
+[components]
+# Bootstrap set only: the shared ARM64 device-tree platform, the ARM CPU/GIC/timer driver and
+# the shared DarwinBoot/prelink tooling. Board drivers (display, input, storage, GPU) are added
+# per area as their interfaces and evidence are reviewed.
+include = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot"]
+
+[kernel]
+defconfig = "tb375fc_defconfig"
+config_fragments = ["arch:configs/common.config", "soc:configs/mt6897.config", "os:configs/ipados.config"]
+patch_series = ["arch:patches/xnu/series", "soc:patches/xnu/series", "os:patches/xnu/series", "device:patches/xnu/series"]
+
+[device_tree]
+source = "device:dts/tb375fc.dts"
+include_dirs = ["soc:dts"]
+
+[firmware]
+config = "tb375fc"
+dsc = "Platforms/Lenovo/tb375fcPkg/tb375fc.dsc"
+fd = "Build/tb375fcPkg/{target}_CLANGPDB/FV/SILICIUM_UEFI.fd"
+packages = ["{uefi}", "{tree}/package", "{tree}/drivers/DarwinBoot", "{edk2}"]
+
+[firmware.defines]
+DEVICE_MODEL = "TB375FC"
+
+[bootimg]
+# The firmware device tree for the boot image is produced by the uefi-tb375fc preflight from the
+# stock vendor_boot DTB; set [bootimg] dtb once that path is fixed.
+
+[bootimg.image]
+# LK reads these from the stock vendor_boot header v4: kernel_addr 0x40000000,
+# ramdisk_addr 0x66f00000, tags_addr 0x47c80000, cmdline "bootopt=64S3,32N2,64N2".
+header_version = 4
+pagesize = 4096
+
+[payload]
+volume = "TB375FCESP"
+size_mib = 192
+loader = "firmware"
+title = "UniXNU TB375FC"
+dram_size = "0x200000000"
+panic_screen = true
+timeout = 3
+kernel_args = ["-v", "serial=3"]
+
+[package]
+# The UniXNU checkout, relative to this repository (tb375fc-port/device -> tb375fc-port -> 修包/UniXNU).
+unixnu = "../../UniXNU"
+
+[package.defconfig]
+"ipados-17.7.11-21H461" = "tb375fc_defconfig"
+
+[payload.adt]
+# Bootstrap profile: the shared arm64 iPadOS 17.7.11 identity. The SoC has no arm64e support
+# path prepared, so iPadOS 27 is out of scope for this board at this stage.
+chip_id = "207"
+dram_size = "0x200000000"
+owned_memory_size = "0x10000000"
+psci_method = "smc"
+packed_data_ramdisk = true
+unique_chip_id = "required"

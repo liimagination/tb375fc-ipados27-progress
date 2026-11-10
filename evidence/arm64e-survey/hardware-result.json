@@ -1,0 +1,22 @@
+{
+  "TG1": 2,
+  "TG0": 0,
+  "MMFR0": "0x0000022200101122",
+  "API": 0,
+  "ISAR2": "0x0000000000000000",
+  "scope": "BSP only",
+  "GPI": 0,
+  "TGran4": 0,
+  "EL": 1,
+  "TCR_EL1": "0x0000000280803518",
+  "APA": 5,
+  "source": "User supplied two device photos",
+  "XNU_boot": "not tested",
+  "GPA": 1,
+  "other_CPUs": "not tested",
+  "PAC_execution": "not tested",
+  "MPIDR": "0x81000000",
+  "ISAR1": "0x0010111101211052",
+  "PAC_keys": "not tested",
+  "EL0": "not tested"
+}

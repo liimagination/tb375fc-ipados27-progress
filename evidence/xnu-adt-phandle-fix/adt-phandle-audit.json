@@ -1,0 +1,15 @@
+{
+  "original_adt_sha256": "b501fccafb56d5e09e5a188df768695f724f1ad4c0e239784099fd226dac6be1",
+  "new_adt_sha256": "88c473ea60474e44f71cc554d02e014c75f82db80b4fdac778abd09d2dda0d5a",
+  "old_bytes": 10920,
+  "new_bytes": 10960,
+  "added_properties": [
+    "/arm-io/intc/AAPL,phandle"
+  ],
+  "existing_properties_unchanged": true,
+  "unresolved_before": [
+    "/arm-io/intc/interrupt-parent"
+  ],
+  "unresolved_after": [],
+  "generator_patch_sha256": "08e7be0897d622f411b5d8047989b6b8d1e2c9949a9dbc6efadbcde1d2a48bb3"
+}

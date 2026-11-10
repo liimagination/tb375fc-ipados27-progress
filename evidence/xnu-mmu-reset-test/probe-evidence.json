@@ -1,0 +1,12 @@
+{
+  "source_kernel_sha256": "5c7f78fdfe1e801ac0ebfaeab70aaf4b8bc742a505e93db3c3b9735245560e3b",
+  "kernel_sha256": "4b9500239f090025e4181fe4a1a7f902054f87aca5d2232d2d67a5787e14927a",
+  "reset_site_va": "0xfffffff00753c438",
+  "reset_cave_va": "0xfffffff00753a5c0",
+  "reset_cave_bytes": "0006a0d221e03bd5c20100582200028bdf3f03d521e03bd53f0002eba3ffff54200180520080b072e1031faae2031faae3031faa030000d45f2003d5ffffff17802fa60400000000",
+  "counter_frequency_hz": 13000000,
+  "reset_delay_seconds": 6,
+  "linked_code_verified": true,
+  "normal_boot_stops_at_checkpoint": true,
+  "hardware_result": "pending"
+}

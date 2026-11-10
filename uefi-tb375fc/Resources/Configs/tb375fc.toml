@@ -1,0 +1,77 @@
+#
+# Lenovo Xiaoxin Pad Pro 12.7 (2025) / TB375FC, MediaTek MT6897 (Dimensity 8300).
+#
+# This file is consumed by UniXNU's scripts/unixnu/bootimg.py. Only the keys
+# that the code actually reads are kept here:
+#   [boot_shim].requires_kernel_header  -> compile_shim() -DREQUIRES_KERNEL_HEADER
+#   [uefi_fd].base / .size              -> compile_shim() -DFD_BASE / -DFD_SIZE,
+#                                          and the len(fd) == size hard check
+#   [boot_image_kernel].kernel_compression
+#   [boot_image].*                      -> MKBOOTIMG_FLAGS passed to
+#                                          Resources/Scripts/mkbootimg.py
+#
+# Boot path (Plan A, same Lenovo/MediaTek LK handoff as TB365FC):
+#   vendor_boot v4 header measured on the stock TB375FC package:
+#     kernel_addr   = 0x40000000
+#     ramdisk_addr  = 0x66f00000
+#     tags_addr     = 0x47c80000
+#     cmdline       = "bootopt=64S3,32N2,64N2"
+#     page_size     = 4096
+#   live device /chosen confirms the same window:
+#     linux,initrd-start = 0x66f00000
+#     linux,initrd-end   = 0x68b246ed
+#   LK decompresses the boot image kernel field to kernel_addr and jumps to it,
+#   so the UEFI FD (whose first bytes are the SEC entry) is packed as a gzip
+#   kernel with ramdisk_size = 0. FD_BASE is that kernel_addr, so BootShim only
+#   has to relocate and branch; no bootloader-side change is needed.
+#
+
+#
+# UEFI FD Configs
+#
+[uefi_fd]
+# = the stock vendor_boot.img kernel_addr, measured on this device.
+base = 0x40000000
+# 8 MiB. MUST stay exactly equal to the FDF output size: both
+# scripts/unixnu/firmware.py and scripts/unixnu/bootimg.py hard-check
+# len(fd_bytes) == size. FD_BLOCKS is derived as size / 0x1000 = 0x800.
+#
+# Why 8 and not the 4 MiB the Lenovo TB365FC uses: this image carries the whole
+# UniXNU integration (UniXNU app + UniXNUDxe + UniXNURamDiskDxe + DarwinBoot)
+# plus Fat/Partition/DiskIo, SimpleFbDxe, KeypadDxe/KeypadDeviceDxe,
+# ConSplitter/GraphicsConsole, SerialDxe, SmBios, DtPlatformDxe and the
+# Advanced Logger. 4 MiB may be tight; 8 MiB is not, and it still leaves
+# 0x40400000..0x47bfffff (120 MiB) free below the LK DTB at 0x47c80000
+# (hw-tmp/iomem.txt: "40000000-4807ffff : System RAM" with the first reserved
+# run at 0x47c80000).
+#
+# TODO(unverified): tighten to the measured FD size once a build reports one.
+# The UEFI stack moves with the window (PcdCPUCoresStackBase = base + size), so
+# this value, tb375fc.dsc and the FDF must change together.
+size = 0x00800000
+
+#
+# Android Boot Image Kernel Configs
+#
+[boot_image_kernel]
+kernel_compression = "gzip"
+# Declarative only: scripts/unixnu/bootimg.py always appends the device tree
+# after the gzip stream (kernel = gzip(shim + fd) + dtb). Kept for parity with
+# docs/zh/porting/uefi-firmware.md "设备配置".
+append_dtb         = true
+
+#
+# Android Boot Image Configs
+#
+[boot_image]
+# The stock TB375FC boot.img is header v4, 4096-byte pages, ramdisk_size 0,
+# header_size 1584, empty cmdline (inputs/manifest.json + boot-and-dtbo-report.json).
+header_version = 4
+pagesize       = 4096
+cmdline        = ""
+# bootimg.py's settings() merges config['boot_image'] into the values dict and
+# later reads image.get('kernel_compression', 'gzip') from that same dict, so
+# the key has to appear here as well - putting it only under
+# [boot_image_kernel] (as the porting page shows) silently falls back to the
+# default instead of honouring the file.
+kernel_compression = "gzip"

@@ -1,0 +1,13 @@
+{
+  "boot_sha256": "f5a92206fe64716f53d906c6eb5ab8a9c5966d1b5160ab928c76c8384d653d9b",
+  "partition": "boot_a",
+  "device": "HA227LJ3",
+  "flash_succeeded": true,
+  "sending_seconds": 17.127,
+  "writing_seconds": 0.198,
+  "reboot_succeeded": true,
+  "reboot_seconds": 0.077,
+  "hardware_checkpoint_confirmed": true,
+  "pending": "B and C automatic resets without corruption observed; restore original XNU bootstrap with the proven loader-code clean.",
+  "root_cause_confirmed": false
+}

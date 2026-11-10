@@ -1,0 +1,17 @@
+{
+  "boot_sha256": "2f313ea5a1162e3dafae0996c07b5d104d91e969f7178b12cd1807133b0e8477",
+  "evidence_image": "C:/WINDOWS/TEMP/codex-clipboard-604b6597-11ee-4c90-b7f4-369ed2458007.png",
+  "observation": "Readable Kernel data abort panic with green and blue bands, rather than corruption.",
+  "pc": "0xfffffff007a89aa0",
+  "esr": "0x96000005",
+  "far": "0x0",
+  "x0": "0x0",
+  "instruction": "ldr x16, [x0]",
+  "symbol": "IODTGetICellCounts(IORegistryEntry*, unsigned int*, unsigned int*) + 0x34",
+  "symbolicated_callers": ["IODTMapInterruptsSharing", "IODeviceTreeAlloc", "IOPlatformExpertDevice::init", "ConfigureIOKit"],
+  "last_confirmed_stage": "XNU IOKit device-tree/interrupt mapping initialization",
+  "complete_kernel_boot_confirmed": false,
+  "diagnosis": "Generated GIC node has FDT phandle but lacks AAPL,phandle. XNU AddPHandle registers AAPL,phandle only; interrupt-parent lookup then yields NULL. Source, faulting instruction and the marble port's documented identical failure agree.",
+  "reference": "https://unixnu.com/zh/devices/marble-milacy",
+  "next_action": "Correct generated ADT controller phandle naming; retain the same kernel and loader."
+}

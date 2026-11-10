@@ -1,0 +1,10 @@
+{
+  "boot_sha256": "2b5cb91697b7162e4862dc6c0b8bf9c9fcac99cb6987df4bb81df2bc497c70ba",
+  "partition": "boot_a",
+  "device": "HA227LJ3",
+  "flash_succeeded": true,
+  "reboot_succeeded": true,
+  "kernel_boot_confirmed": false,
+  "pending": "User observation after manually selecting XNU entry",
+  "timestamp": "2026-11-07T23:06:53.3412656+08:00"
+}

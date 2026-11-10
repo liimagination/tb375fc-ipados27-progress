@@ -1,0 +1,14 @@
+##
+#  Lenovo TB375FC (MediaTek MT6897) platform package.
+#
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  DEC_SPECIFICATION                   = 0x00010005
+  PACKAGE_NAME                        = tb375fcPkg
+  PACKAGE_GUID                        = 8C4F1B27-6A3D-4E58-9B71-2D5A0C7E4F13
+  PACKAGE_VERSION                     = 0.1
+
+[Includes]
+  Include

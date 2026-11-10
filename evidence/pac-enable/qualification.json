@@ -1,0 +1,28 @@
+{
+  "experiment": "temporary SCTLR.EnIA enable; PACIA/AUTIA; exact SCTLR restore; preserved display/input candidate",
+  "release_state_test": "GCC ASan/UBSan passed: tap, hold, idle, repeated release, shutdown, recovery",
+  "source_changes": [
+    "Silicon/Silicium/SiliciumPkg/Drivers/SimpleFbDxe/SimpleFb.c",
+    "Silicon/Silicium/SiliciumPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf",
+    "unixnu/package/UniXNUPkg/Library/UniXNULib/PacActive.c",
+    "unixnu/package/UniXNUPkg/Library/UniXNULib/UniXNULib.inf",
+    "Platforms/Lenovo/tb375fcPkg/Library/KeypadDeviceLib/KeypadDeviceLib.c",
+    "unixnu/package/UniXNUPkg/Library/UniXNULib/Menu.c",
+    "Platforms/Lenovo/tb375fcPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.c"
+  ],
+  "header_version": 4,
+  "header_size": 1584,
+  "ramdisk_size": 0,
+  "signature_size": 0,
+  "kernel_size": 637785,
+  "fd_size": 8388608,
+  "image_size": 643072,
+  "compression": "lz4_legacy",
+  "trailing_dtb": false,
+  "decode_matches_shim_fd": true,
+  "host_gop_test": "passed GCC AddressSanitizer + UndefinedBehaviorSanitizer",
+  "hardware_test": "NOT RUN",
+  "device_writes": false,
+  "sha256": "37c5af57ea3700d4f4f6abd4d50ea33a28d9115b03debdd91071ec273c9f710f",
+  "rollback_boot_a_sha256": "1ad2cb450587a101ec6fcb7e0db7cf0b3f9b9ff978cf972a7b52a909cb815357"
+}

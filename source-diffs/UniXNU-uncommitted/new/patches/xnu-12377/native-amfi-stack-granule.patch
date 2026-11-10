@@ -1,0 +1,42 @@
+--- a/osfmk/kern/stack.c
++++ b/osfmk/kern/stack.c
+@@ -79,6 +79,11 @@
+ static unsigned int             stack_new_count;                                                /* total new stack allocations */
+ 
+ static SECURITY_READ_ONLY_LATE(vm_offset_t)  stack_addr_mask;
++static SECURITY_READ_ONLY_LATE(vm_offset_t)  stack_allocation_mask;
++#if defined(__arm64__)
++/* Per-consumer AMFI DER stack-budget granule; not the VM page shift. */
++SECURITY_READ_ONLY_LATE(uint32_t)            unixnu_kernel_stack_shift;
++#endif
+ SECURITY_READ_ONLY_LATE(vm_offset_t)         kernel_stack_size;
+ SECURITY_READ_ONLY_LATE(vm_offset_t)         kernel_stack_mask;
+ vm_offset_t                                  kernel_stack_depth_max;
+@@ -175,6 +180,18 @@
+ 
+ 	stack_addr_mask = roundup_pow2(kernel_stack_size) - 1;
+ 	kernel_stack_mask = ~stack_addr_mask;
++	stack_allocation_mask = stack_addr_mask;
++#if defined(__arm64__)
++	/*
++	 * AMFI's DER iterator tests SP modulo a power-of-two granule. A stack
++	 * must not cross that boundary. Keep all three guard pages and the
++	 * existing live stack size, but align the allocation to a granule that
++	 * contains both. KMA_GUARD_FIRST aligns after its first lower guard;
++	 * the second lower guard puts the live stack one page into the granule.
++	 */
++	stack_allocation_mask = roundup_pow2(kernel_stack_size + ptoa(3)) - 1;
++	unixnu_kernel_stack_shift = (uint32_t)flsll(stack_allocation_mask);
++#endif
+ }
+ STARTUP(TUNABLES, STARTUP_RANK_MIDDLE, stack_init);
+ 
+@@ -218,7 +235,7 @@
+ 		 */
+ 
+ 		kernel_memory_allocate(kernel_map, &stack,
+-		    kernel_stack_size + ptoa(3), stack_addr_mask,
++		    kernel_stack_size + ptoa(3), stack_allocation_mask,
+ 		    flags, VM_KERN_MEMORY_STACK);
+ 
+ 		/*

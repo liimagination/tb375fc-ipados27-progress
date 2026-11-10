@@ -1,0 +1,13 @@
+{
+  "boot_sha256": "2f313ea5a1162e3dafae0996c07b5d104d91e969f7178b12cd1807133b0e8477",
+  "partition": "boot_a",
+  "device": "HA227LJ3",
+  "flash_succeeded": true,
+  "sending_seconds": 17.128,
+  "writing_seconds": 0.199,
+  "reboot_succeeded": true,
+  "reboot_seconds": 0.05,
+  "intentional_reset_enabled": false,
+  "complete_kernel_boot_confirmed": false,
+  "pending": "User selects TB375FC XNU27 boot; capture final bands, readable panic/output or unexpected reset"
+}

@@ -1,0 +1,11 @@
+{
+  "boot_sha256": "f5a92206fe64716f53d906c6eb5ab8a9c5966d1b5160ab928c76c8384d653d9b",
+  "user_report": "B and C both reboot automatically; no screen corruption.",
+  "B_after_mmu_off": {"expected_reset_observed": true, "screen_corruption": false},
+  "C_first_kernel_entry": {"expected_reset_observed": true, "screen_corruption": false},
+  "delay_seconds_measured": null,
+  "interpretation": "The corrected loader reaches its MMU-off checkpoint and the patched first kernel entry. Compared with B corruption/no reset on the preceding image with an identical kernel/ADT/payload, this supports the handoff-code PoC visibility correction. The address guard also passed, as the transitions were attempted.",
+  "original_xnu_bootstrap_executed": false,
+  "complete_kernel_boot_confirmed": false,
+  "next_step": "Retain the corrected loader and restore the XNU kernel copy with entry/pre-MMU bars and panic output, without intentional timed resets."
+}

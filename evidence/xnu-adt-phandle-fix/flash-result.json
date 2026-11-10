@@ -1,0 +1,12 @@
+{
+  "boot_sha256": "b4f55025b747568d6b535b93069617e7653f0f14cd23284df18a02b7d50793fd",
+  "partition": "boot_a",
+  "device": "HA227LJ3",
+  "flash_succeeded": true,
+  "sending_seconds": 17.128,
+  "writing_seconds": 0.2,
+  "reboot_succeeded": true,
+  "reboot_seconds": 0.103,
+  "complete_kernel_boot_confirmed": false,
+  "pending": "Select TB375FC XNU27 boot; observe whether IODTGetICellCounts panic is passed and capture the next screen"
+}
